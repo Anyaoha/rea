@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { WEB_SOURCE_MAP_LIMITS } from "../../domain/webSourceLocation.js";
 import { hasValidSourceMapContents } from "../../domain/sourceMapContents.js";
+import { sourceMapJsonText } from "../../domain/sourceMapEnvelope.js";
+import type { EncodedSourceMapXInput } from "@jridgewell/trace-mapping";
 
 const leafSchema = z.object({
   version: z.literal(3),
@@ -73,9 +75,26 @@ export interface SourceMapSourceDeclaration {
 /** Validated leaf with absolute first-line offsets and its enclosing section boundary. */
 export interface SourceMapLeaf {
   readonly map: z.output<typeof leafSchema>;
+  readonly codecMap: EncodedSourceMapXInput;
   readonly offset: Offset;
   readonly stop: Offset | null;
 }
+
+const codecLeaf = (
+  map: z.output<typeof leafSchema>,
+): EncodedSourceMapXInput => ({
+  version: 3,
+  ...(map.file === undefined ? {} : { file: map.file }),
+  ...(typeof map.sourceRoot === "string" ? { sourceRoot: map.sourceRoot } : {}),
+  sources: map.sources,
+  ...(map.sourcesContent == null ? {} : { sourcesContent: map.sourcesContent }),
+  names: map.names,
+  mappings: map.mappings,
+  ...(map.ignoreList === undefined ? {} : { ignoreList: map.ignoreList }),
+  ...(map.x_google_ignoreList === undefined
+    ? {}
+    : { x_google_ignoreList: map.x_google_ignoreList }),
+});
 
 const compare = (a: Offset, b: Offset): number =>
   a.line - b.line || a.column - b.column;
@@ -282,33 +301,10 @@ const inspectLeaf = (
 /** Validate structure before allocation, retaining raw declarations and section boundaries. */
 export const inspectSourceMap = (
   text: string,
-): {
-  readonly jsonText: string;
-  readonly format: "regular" | "indexed";
-  readonly reportedFile: string | null;
-  readonly declarations: readonly SourceMapSourceDeclaration[];
-  readonly leaves: readonly SourceMapLeaf[];
-} => {
-  const withoutBom = text.replace(/^\uFEFF/u, "");
-  const jsonText = withoutBom.startsWith(")]}'")
-    ? withoutBom.slice(withoutBom.indexOf("\n") + 1)
-    : withoutBom;
+): ReturnType<typeof inspectSourceMapValue> => {
+  const jsonText = sourceMapJsonText(text);
   const value: unknown = JSON.parse(jsonText);
-  const inspected = inspectSourceMapValue(value);
-  const normalized =
-    inspected.format === "regular"
-      ? inspected.leaves[0]?.map
-      : {
-          version: 3,
-          sections: inspected.leaves.map((leaf) => ({
-            offset: leaf.offset,
-            map: leaf.map,
-          })),
-        };
-  return {
-    jsonText: JSON.stringify(normalized),
-    ...inspected,
-  };
+  return inspectSourceMapValue(value);
 };
 
 /** Return validated leaves when a consumer needs decoded rows after preflight. */
@@ -343,8 +339,16 @@ export const inspectSourceMapValue = (
       continue;
     }
     const leaf = inspectLeaf(node, budget, options);
-    leaves.push({ map: leaf, offset: node.offset, stop: node.stop });
-    if (options.profile !== "browser-collection")
+    leaves.push({
+      map: leaf,
+      codecMap: codecLeaf(leaf),
+      offset: node.offset,
+      stop: node.stop,
+    });
+    if (options.profile !== "browser-collection") {
+      const ignoredSources = new Set(
+        leaf.ignoreList ?? leaf.x_google_ignoreList ?? [],
+      );
       for (const [sourceIndex, source] of leaf.sources.entries())
         declarations.push({
           sectionPath: node.path,
@@ -352,10 +356,9 @@ export const inspectSourceMapValue = (
           source,
           root: leaf.sourceRoot ?? null,
           content: leaf.sourcesContent?.[sourceIndex] ?? null,
-          ignored: (leaf.ignoreList ?? leaf.x_google_ignoreList ?? []).includes(
-            sourceIndex,
-          ),
+          ignored: ignoredSources.has(sourceIndex),
         });
+    }
   }
   return {
     format: root.sections === undefined ? "regular" : "indexed",

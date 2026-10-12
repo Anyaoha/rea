@@ -22,6 +22,7 @@ const WINDOWS_INSTALL = "C:\\tools\\ghidra_12.1.4_PUBLIC";
 const WINDOWS_PROPERTIES = `${WINDOWS_INSTALL}\\Ghidra\\application.properties`;
 const WINDOWS_HEADLESS = `${WINDOWS_INSTALL}\\support\\analyzeHeadless.bat`;
 const WINDOWS_DECOMPILER = `${WINDOWS_INSTALL}\\Ghidra\\Features\\Decompiler\\os\\win_x86_64\\decompile.exe`;
+
 const JAVA: GhidraJavaObservation = {
   version: "21.0.11",
   major: SUPPORTED_GHIDRA_JAVA_MAJOR,
@@ -43,7 +44,9 @@ const host = (
   ...overrides,
 });
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 it("probes the selected Java environment without reading conflicting ambient settings", () => {
   vi.stubEnv("REA_GHIDRA_CONTEXT", "ambient");
@@ -570,6 +573,19 @@ describe("Ghidra FAT native decompiler admission", () => {
 describe("Ghidra native decompiler admission", () => {
   it.each([
     {
+      name: "a MIPS decompiler at the Linux x64 path",
+      options: {
+        environment: {},
+        installDir: INSTALL,
+        platform: "linux" as const,
+        architecture: "x64" as const,
+      },
+      executableHeader: (path: string) =>
+        path === LINUX_DECOMPILER
+          ? { bytes: elf(1, 1, 8), size: 52 }
+          : undefined,
+    },
+    {
       name: "a Linux x86-64 decompiler at the macOS arm64 path",
       options: {
         environment: {},
@@ -648,6 +664,30 @@ describe("Ghidra native decompiler admission", () => {
     ).toMatchObject({
       status: "passed",
       detail: expect.stringContaining("could not be established"),
+    });
+  });
+
+  it("accepts a one-slice universal-format Darwin native decompiler", () => {
+    const bytes = fat([0x0100000c]);
+    const result = inspectGhidraInstallation(
+      {
+        environment: {},
+        installDir: INSTALL,
+        platform: "darwin",
+        architecture: "arm64",
+      },
+      host({
+        executableHeader: (path: string) =>
+          path === MAC_DECOMPILER ? { bytes, size: bytes.length } : undefined,
+      }),
+    );
+    expect(result.status).toBe("available");
+    if (result.status !== "available") return;
+    expect(
+      result.checks.find(({ name }) => name === "native_decompiler"),
+    ).toMatchObject({
+      status: "passed",
+      detail: `${MAC_DECOMPILER} reports mach-o-universal arm64, which matches darwin/arm64`,
     });
   });
 

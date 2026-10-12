@@ -11,7 +11,12 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const nodeVersion = "22.19.0";
 const compiler = "x86_64-w64-mingw32-g++";
 const cache = join(homedir(), ".cache", "rea-windows-native");
-const output = join(root, "native", "windows", "build");
+const inspectionFixture = process.argv[2] === "--inspection-fixture";
+if (process.argv.length > 3 || (process.argv.length > 2 && !inspectionFixture))
+  throw new Error("Unknown Windows native build argument");
+const output = inspectionFixture
+  ? join(root, ".cache", "windows-native-inspection-fixture")
+  : join(root, "native", "windows", "build");
 const run = (command, args) => {
   const result = spawnSync(command, args, {
     cwd: root,
@@ -84,7 +89,8 @@ if (!(await exists(join(headers, "node_api.h")))) {
 }
 const artifact = "rea-windows-x64.node";
 // MSVC short-import libraries do not produce a correct Node import table with
-// GNU ld. Generate a GNU import library for the exact stable Node-API symbols.
+// GNU ld. Generate a GNU delay-import library for the exact stable Node-API
+// symbols; addon.cc binds it to the host executable, whatever its file name.
 const sources = ["addon.cc", "filesystem.cc", "process.cc"];
 const sourceText = (
   await Promise.all(
@@ -106,7 +112,7 @@ await writeFile(
   definition,
   `LIBRARY node.exe\nEXPORTS\n${symbols.join("\n")}\n`,
 );
-run("x86_64-w64-mingw32-dlltool", ["-d", definition, "-l", library]);
+run("x86_64-w64-mingw32-dlltool", ["-d", definition, "-y", library]);
 run(compiler, [
   "-std=c++17",
   "-O2",
@@ -119,7 +125,9 @@ run(compiler, [
   "-Wl,--no-insert-timestamp",
   `-I${headers}`,
   "native/windows/src/addon.cc",
-  "native/windows/src/filesystem.cc",
+  inspectionFixture
+    ? "tests/fixtures/windows-native-inspection-failure.cc"
+    : "native/windows/src/filesystem.cc",
   "native/windows/src/process.cc",
   library,
   "-ladvapi32",

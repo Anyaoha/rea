@@ -1,7 +1,13 @@
 import {
+  CAPTURE_PROCESS_MEMORY_LIMIT_REASON,
   historicalCaptureFailure,
   captureMemoryFailure,
 } from "./CaptureFailures.js";
+import {
+  HAR_CAPTURE_HEAP_ENFORCED,
+  HAR_CAPTURE_HEAP_LIMITS,
+  HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
+} from "./CaptureRelease.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { HistoricalCaptureFormatAdapter } from "./HistoricalCaptureFormatAdapter.js";
 import { randomUUID } from "node:crypto";
@@ -23,7 +29,7 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
-  webNetworkCaptureSchema,
+  webNetworkCapturePayloadSchema,
   type InspectWebNetworkCaptureInput,
   type WebNetworkCapture,
 } from "../../domain/webNetworkCapture.js";
@@ -32,14 +38,11 @@ import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 
 const OPERATION = "inspect_web_network_capture";
-const decodedSchema = webNetworkCaptureSchema.omit({
-  artifact: true,
-  format: true,
-  runtime_attribution: true,
-  limitations: true,
-});
 const replySchema = z.discriminatedUnion("ok", [
-  z.strictObject({ ok: z.literal(true), value: decodedSchema }),
+  z.strictObject({
+    ok: z.literal(true),
+    value: webNetworkCapturePayloadSchema,
+  }),
   z.strictObject({
     ok: z.literal(false),
     reason: z.enum([
@@ -113,7 +116,7 @@ export class HistoricalCaptureDecoder {
         UV_THREADPOOL_SIZE: "1",
       };
       delete environment.NODE_OPTIONS;
-      await runOwnedCommand(
+      const completed = await runOwnedCommand(
         {
           ...command,
           runId: `rea-web-capture-${randomUUID()}`,
@@ -126,6 +129,10 @@ export class HistoricalCaptureDecoder {
         },
         options?.signal === undefined ? {} : { signal: options.signal },
       );
+      // A decoder that survived a failed allocation may still reply; its
+      // reply is not trusted as complete once the limit was reached.
+      if (completed.memoryLimitReached === true)
+        throw captureMemoryFailure(input, CAPTURE_PROCESS_MEMORY_LIMIT_REASON);
       let reply: z.output<typeof replySchema>;
       try {
         const replyFile = await readStableArtifact(
@@ -204,7 +211,7 @@ export class HistoricalCaptureDecoder {
           "This is retained producer evidence, without live browser transaction IDs, scenario provenance, execution attribution or deployment authenticity. Recorded URLs are never fetched.",
           "Every record is decoded before selection; no partial success is returned on malformed input or a resource limit.",
           "Known authentication headers/cookies and explicitly marked literal values are excluded. Unknown extension names do not establish sensitivity.",
-          "A 32 MiB input, 96 MiB reply and 64-level nesting budget bound complete evidence. HAR uses a 192 MiB Node old-generation heap; native decoding uses a 768 MiB Linux address-space limit. Each owned command has a 30-second deadline with independent cleanup.",
+          `A 32 MiB input, 96 MiB reply and 64-level nesting budget bound complete evidence. ${harMemoryLimitation()}; native decoding uses a 768 MiB Linux address-space limit. Each owned command has a 30-second deadline with independent cleanup.`,
         ],
       });
     } catch (cause: unknown) {
@@ -243,6 +250,15 @@ export class HistoricalCaptureDecoder {
       : result;
   }
 }
+
+/** The HAR decoder runs on this executable; only Node.js enforces its V8 heap flags. */
+const harMemoryLimitation = (): string => {
+  if (HAR_CAPTURE_HEAP_ENFORCED)
+    return `HAR uses a ${String(HAR_CAPTURE_HEAP_LIMITS.oldGenerationMiB)} MiB Node old-generation heap`;
+  return HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES === null
+    ? "HAR runs on Bun, which does not enforce REA's V8 heap flags"
+    : `HAR runs on Bun, which does not enforce REA's V8 heap flags, under a ${String(HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES)}-byte Windows Job Object commit limit`;
+};
 
 const replyFailureReason = (cause: unknown): string => {
   if (cause instanceof ArtifactReaderFailure) return cause.message;

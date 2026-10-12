@@ -7,6 +7,7 @@ import type {
 } from "./electronStaticAnalysisTypes.js";
 import {
   boundedExpression,
+  electronCalleePath,
   electronStaticValue,
   handlerKind,
 } from "./electronStaticAnalysisValues.js";
@@ -25,7 +26,7 @@ export const inspectElectronIpcNode = (
   node: t.Node,
   context: JavaScriptFindingContext,
 ): void => {
-  if (t.isCallExpression(node)) {
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
     inspectIpcCall(node, context);
     inspectValidationCall(node, context);
   }
@@ -33,11 +34,10 @@ export const inspectElectronIpcNode = (
 };
 
 const inspectIpcCall = (
-  node: t.CallExpression,
+  node: t.CallExpression | t.OptionalCallExpression,
   context: JavaScriptFindingContext,
 ): void => {
-  const name = calleeName(node.callee);
-  const descriptor = ipcDescriptor(name);
+  const descriptor = ipcDescriptor(electronCalleePath(node.callee, context));
   if (descriptor === undefined) return;
   const channelNode = argumentNode(node.arguments[0]);
   const channelValue = electronStaticValue(context.source, channelNode);
@@ -117,7 +117,7 @@ const inspectValidationComparison = (
 };
 
 const inspectValidationCall = (
-  node: t.CallExpression,
+  node: t.CallExpression | t.OptionalCallExpression,
   context: JavaScriptFindingContext,
 ): void => {
   if (
@@ -175,9 +175,13 @@ const addValidation = (
   });
 };
 
-const ipcDescriptor = (name: string): ElectronIpcDescriptor | undefined => {
-  const renderer = suffixOperation(name, "ipcRenderer");
-  if (renderer !== undefined) {
+export const ipcDescriptor = (
+  path: readonly string[] | undefined,
+): ElectronIpcDescriptor | undefined => {
+  if (path?.length !== 2) return undefined;
+  const [object, operation] = path;
+  if (object === "ipcRenderer" && operation !== undefined) {
+    const renderer = operation;
     switch (renderer) {
       case "send":
         return { side: "renderer", operation: "send", mode: "send" };
@@ -197,14 +201,16 @@ const ipcDescriptor = (name: string): ElectronIpcDescriptor | undefined => {
           operation: "send-to-host",
           mode: "send",
         };
+      case "addListener":
       case "on":
         return { side: "renderer", operation: "on", mode: "listen" };
       case "once":
         return { side: "renderer", operation: "once", mode: "listen" };
     }
   }
-  const main = suffixOperation(name, "ipcMain");
+  const main = object === "ipcMain" ? operation : undefined;
   switch (main) {
+    case "addListener":
     case "on":
       return { side: "main", operation: "on", mode: "listen" };
     case "once":
@@ -218,25 +224,13 @@ const ipcDescriptor = (name: string): ElectronIpcDescriptor | undefined => {
   }
 };
 
-const suffixOperation = (
-  name: string,
-  object: "ipcRenderer" | "ipcMain",
-): string | undefined => {
-  const marker = `${object}.`;
-  const index = name.lastIndexOf(marker);
-  if (index < 0) return undefined;
-  const prefix = name.slice(0, index);
-  if (prefix !== "" && !prefix.endsWith(".")) return undefined;
-  const operation = name.slice(index + marker.length);
-  return operation.includes(".") ? undefined : operation;
-};
-
 const senderSubject = (
   node: t.Node,
 ): ElectronSenderValidationFinding["subject"] | undefined => {
-  const name = t.isCallExpression(node)
-    ? calleeName(node.callee)
-    : calleeName(node);
+  const name =
+    t.isCallExpression(node) || t.isOptionalCallExpression(node)
+      ? calleeName(node.callee)
+      : calleeName(node);
   if (/(?:^|\.)sender\.getURL$/u.test(name)) return "sender-url";
   if (/(?:^|\.)senderFrame\.origin$/u.test(name)) return "sender-origin";
   if (/(?:^|\.)senderFrame\.url$/u.test(name)) return "sender-url";

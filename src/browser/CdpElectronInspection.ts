@@ -24,6 +24,7 @@ import {
 import { captureElectronScripts } from "./CdpElectronScripts.js";
 import { captureElectronWorkers } from "./CdpElectronWorkers.js";
 import { authorizedElectronFile } from "./ElectronFileScope.js";
+import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 interface ElectronContext {
   readonly connection: CdpConnection;
@@ -56,6 +57,11 @@ export const inspectCdpElectronPage = async (
       "Local file paths exposed by the selected CDP target are retained in the observation.",
       "REA does not evaluate renderer JavaScript, invoke Electron APIs, navigate, click, or close the page.",
       "Select include_script_sources to retain script contents.",
+      ...(context.target.attached === null
+        ? [
+            "CDP discovery omitted the target attachment state; attached is reported as unknown.",
+          ]
+        : []),
     ],
     mainFrameId: undefined,
     navigationDuringCapture: false,
@@ -300,7 +306,7 @@ const captureResources = async (
     pending.push(...recordsValue(tree.childFrames));
   }
   return resources.sort((left, right) =>
-    left.resource_key.localeCompare(right.resource_key),
+    compareUnicodeCodePoints(left.resource_key, right.resource_key),
   );
 };
 

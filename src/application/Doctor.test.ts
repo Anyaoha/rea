@@ -5,12 +5,64 @@ import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
 import { runDoctor } from "./Doctor.js";
 
+describe("doctor runtime check", () => {
+  it("reports Node 25 as unsupported", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({ runtime: { id: "node", version: "25.1.0" } }),
+    );
+
+    expect(result.healthy).toBe(false);
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({
+        name: "node",
+        ok: false,
+        detail: "25.1.0",
+        details: { runtime: "node", version: "25.1.0" },
+        classification: "missing_dependency",
+      }),
+    );
+  });
+
+  it.each([
+    { compatibility: "26.3.0", ok: true },
+    { compatibility: "25.1.0", ok: false },
+  ])(
+    "identifies Bun and admits it by Node.js compatibility $compatibility",
+    async ({ compatibility, ok }) => {
+      const result = await runDoctor(
+        undefined,
+        host({
+          runtime: {
+            id: "bun",
+            version: "1.4.2",
+            nodeCompatibilityVersion: compatibility,
+          },
+        }),
+      );
+
+      expect(result.checks).toContainEqual(
+        expect.objectContaining({
+          name: "node",
+          ok,
+          classification: ok ? "healthy" : "missing_dependency",
+          details: {
+            runtime: "bun",
+            version: "1.4.2",
+            node_compatibility_version: compatibility,
+          },
+        }),
+      );
+    },
+  );
+});
+
 describe("doctor", () => {
   it("returns exact recovery for every failed diagnostic", async () => {
     const result = await runDoctor(
       "/missing/app",
       host({
-        nodeVersion: "20.0.0",
+        runtime: { id: "node", version: "20.0.0" },
         macosVersion: () => Promise.resolve("11.7"),
         executable: () => Promise.resolve(false),
         validTarget: () => Promise.resolve(false),
@@ -22,24 +74,10 @@ describe("doctor", () => {
       ),
     ).toEqual({
       node: `Install ${SUPPORTED_NODE_VERSION_PROSE}.`,
-      host: "REA supports macOS 12+, Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, and the experimental Windows x64 Ghidra P0 boundary.",
+      host: "REA supports macOS 12+, Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, Omarchy, and the experimental Windows x64 Ghidra P0 boundary.",
       hopper: "Run rea setup to install Hopper, or set HOPPER_LAUNCHER_PATH.",
       target: "Supply a readable local app or program path.",
     });
-  });
-
-  it("reports Node 25 as unsupported", async () => {
-    const result = await runDoctor(undefined, host({ nodeVersion: "25.1.0" }));
-
-    expect(result.healthy).toBe(false);
-    expect(result.checks).toContainEqual(
-      expect.objectContaining({
-        name: "node",
-        ok: false,
-        detail: "25.1.0",
-        classification: "missing_dependency",
-      }),
-    );
   });
 
   it.each(["11.7", undefined])(
@@ -243,6 +281,42 @@ describe("doctor installation identity", () => {
 });
 
 describe("doctor scoped readiness", () => {
+  it("checks explicitly selected skill destinations independently of registrations", async () => {
+    const selected: (readonly string[] | undefined)[] = [];
+    const result = await runDoctor(
+      undefined,
+      host({
+        clientRegistrations: () => Promise.resolve([]),
+        installedSkillIdentity: (clients) => {
+          selected.push(clients);
+          return Promise.resolve({
+            version: "stale",
+            toolCount: 0,
+            canonical: false,
+          });
+        },
+      }),
+      {
+        clients: [],
+        skillClients: ["claude_code", "claude_code"],
+        skill: true,
+      },
+    );
+
+    expect(selected).toEqual([["claude_code"]]);
+    expect(result.scope).toMatchObject({
+      mode: "explicit",
+      clients: [],
+      skill_clients: ["claude_code"],
+      skill: true,
+    });
+    expect(result.healthy).toBe(false);
+    expect(result.scope_checks.map(({ name }) => name)).toEqual([
+      "node",
+      "skill:identity",
+    ]);
+  });
+
   it("scopes effective readiness to selected clients without hiding drift", async () => {
     const registrations: readonly ClientRegistrationStatus[] = [
       {

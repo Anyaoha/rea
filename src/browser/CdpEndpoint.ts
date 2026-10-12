@@ -5,8 +5,9 @@ import { z } from "zod";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
-import { type BrowserObservationOperation } from "../domain/browserObservationErrors.js";
+import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 import { safeParseJson } from "../domain/safeJson.js";
 
 const endpointVersionSchema = z.object({
@@ -23,7 +24,7 @@ const endpointTargetSchema = z.object({
   type: z.string().min(1),
   title: z.string().default(""),
   url: z.string(),
-  attached: z.boolean().default(false),
+  attached: z.boolean().nullable().optional(),
   webSocketDebuggerUrl: z.string().min(1).optional(),
 });
 const endpointTargetsSchema = z.array(endpointTargetSchema);
@@ -46,7 +47,7 @@ export interface CdpEndpointTarget {
   readonly type: string;
   readonly title: string;
   readonly url: string;
-  readonly attached: boolean;
+  readonly attached: boolean | null;
   readonly webSocket?: CdpPageWebSocketEndpoint;
 }
 
@@ -106,7 +107,7 @@ export const discoverCdpEndpoint = async (
       type: target.type,
       title: sanitizeTargetTitle(target.title, target.url),
       url: target.url,
-      attached: target.attached,
+      attached: target.attached ?? null,
       ...targetWebSocket(endpoint, target, operation),
     })),
   };
@@ -230,8 +231,7 @@ const safeCdpWebSocketEndpoint = (
     parsed.port !== trustedEndpoint.port ||
     parsed.username !== "" ||
     parsed.password !== "" ||
-    parsed.search !== "" ||
-    parsed.hash !== "" ||
+    urlDeclaresQueryOrFragment(parsed) ||
     path === undefined
   )
     throw new BrowserObservationError(operation, "invalid_endpoint_response");

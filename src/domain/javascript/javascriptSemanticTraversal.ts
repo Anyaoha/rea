@@ -1,7 +1,7 @@
 import * as t from "@babel/types";
 
 /**
- * Visit every Babel AST node in deterministic source-tree order.
+ * Visit Babel AST nodes in deterministic source-tree order, excluding skipped subtrees.
  *
  * `readAncestors` returns a snapshot during `enter`, outermost-first and
  * ending with the direct parent. Callers
@@ -12,15 +12,30 @@ import * as t from "@babel/types";
  */
 export const traverseJavaScriptAst = (
   root: t.Node,
-  visitor: {
-    readonly enter: (
-      node: t.Node,
-      parent: t.Node | null,
-      readAncestors: () => readonly t.Node[],
-    ) => void;
-    readonly exit?: (node: t.Node, parent: t.Node | null) => void;
-  },
-): void => {
+  visitor: JavaScriptAstVisitor,
+): void => completeSemanticSteps(traverseJavaScriptAstSteps(root, visitor));
+
+/** Callbacks for one deterministic AST traversal. */
+export interface JavaScriptAstVisitor {
+  /** Omit a child and its subtree without entering or exiting it. */
+  readonly skip?: (node: t.Node) => boolean;
+  readonly enter: (
+    node: t.Node,
+    parent: t.Node | null,
+    readAncestors: () => readonly t.Node[],
+  ) => void;
+  readonly exit?: (node: t.Node, parent: t.Node | null) => void;
+}
+
+/**
+ * {@link traverseJavaScriptAst} with a yield every 1,024 visited nodes, so a
+ * caller can serve control messages during one large traversal. Visit order
+ * and callbacks are identical.
+ */
+export function* traverseJavaScriptAstSteps(
+  root: t.Node,
+  visitor: JavaScriptAstVisitor,
+): Generator<void, void> {
   const ancestors: t.Node[] = [];
   const enter = (node: t.Node, parent: t.Node | null): TraversalFrame => {
     visitor.enter(node, parent, () => [...ancestors]);
@@ -28,18 +43,32 @@ export const traverseJavaScriptAst = (
     return { node, parent, children: childNodes(node), nextIndex: 0 };
   };
   const pending = [enter(root, null)];
+  let visited = 1;
   while (pending.length > 0) {
     const current = pending.at(-1);
     if (current === undefined) break;
     const child = current.children[current.nextIndex];
     if (child !== undefined) {
       current.nextIndex += 1;
+      if (visited % 1024 === 0) yield;
+      visited += 1;
+      if (visitor.skip?.(child) === true) continue;
       pending.push(enter(child, current.node));
     } else {
       visitor.exit?.(current.node, current.parent);
       ancestors.pop();
       pending.pop();
     }
+  }
+}
+
+/** Run cooperative analysis steps to completion without yielding control. */
+export const completeSemanticSteps = <Value>(
+  steps: Iterator<void, Value>,
+): Value => {
+  for (;;) {
+    const step = steps.next();
+    if (step.done === true) return step.value;
   }
 };
 
@@ -56,8 +85,7 @@ interface TraversalFrame {
  * not be reintroduced (they diverge on loc/comment fields and ordering).
  */
 export const childNodes = (node: t.Node): t.Node[] => {
-  const keys = t.VISITOR_KEYS[node.type];
-  if (keys === undefined) return [];
+  const keys = javaScriptAstChildKeys(node);
   const children: t.Node[] = [];
   for (const key of keys) {
     const value: unknown = Reflect.get(node, key);
@@ -72,3 +100,7 @@ export const childNodes = (node: t.Node): t.Node[] => {
   }
   return children;
 };
+
+/** Child-bearing fields; shared by traversal and structural AST comparison. */
+export const javaScriptAstChildKeys = (node: t.Node): readonly string[] =>
+  t.VISITOR_KEYS[node.type] ?? [];

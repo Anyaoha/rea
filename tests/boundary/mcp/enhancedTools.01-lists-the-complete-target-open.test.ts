@@ -7,7 +7,7 @@ import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../../../src/contracts/managed/
 import { ENHANCED_TOOL_CONTRACTS } from "../../../src/contracts/enhancedToolContracts.js";
 import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
-import {} from "../../../src/domain/jsonValue.js";
+import type {} from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
@@ -189,7 +189,7 @@ const fixturePort = (): AnalysisOperationPort => ({
       case "analyze_function":
         return Promise.resolve(targetObservation(functionDossier));
       default:
-        return Promise.resolve(ok(null));
+        throw new Error(`Unexpected analysis operation: ${name}`);
     }
   },
 });
@@ -288,11 +288,43 @@ describe("enhanced MCP tools", () => {
       failed: 0,
     });
     expect(results[3]).toEqual({
-      "0": [{ address: "0x1", status: "ok", calls: ["0x2", "0x3"] }],
-      "1": [
-        { address: "0x2", status: "ok", calls: ["0x1"] },
-        { address: "0x3", status: "ok", calls: [] },
-      ],
+      graph: {
+        "0": [
+          {
+            address: "0x1",
+            status: "ok",
+            calls: ["0x2", "0x3"],
+            limitations: ["Provider did not report relationship coverage."],
+            relationship_coverage: {
+              status: "unknown",
+              reason: "Provider did not report relationship coverage.",
+            },
+          },
+        ],
+        "1": [
+          {
+            address: "0x2",
+            status: "ok",
+            calls: ["0x1"],
+            limitations: ["Provider did not report relationship coverage."],
+            relationship_coverage: {
+              status: "unknown",
+              reason: "Provider did not report relationship coverage.",
+            },
+          },
+          {
+            address: "0x3",
+            status: "ok",
+            calls: [],
+            limitations: ["Provider did not report relationship coverage."],
+            relationship_coverage: {
+              status: "unknown",
+              reason: "Provider did not report relationship coverage.",
+            },
+          },
+        ],
+      },
+      limitations: [],
     });
     expect(results[4]).toMatchObject({
       total: 1,
@@ -354,7 +386,7 @@ describe("enhanced MCP tools", () => {
         { address: "0x1", depth: 0 },
         { address: "0x2", depth: 1 },
       ],
-      truncated: false,
+      truncated: true,
     });
     expect(results[11]).toMatchObject({
       start: "missing-selector",

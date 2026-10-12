@@ -1,34 +1,6 @@
 name: Real website runtime attribution
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/real-web-runtime.yml"
-      - "scripts/verify-browser-runtime.mjs"
-      - "scripts/lib/browser-runtime-*.mjs"
-      - "src/process/ProviderProcess.ts"
-      - "src/process/ProcessOwnership*.ts"
-      - "scripts/fixtures/browser-runtime-site.mjs"
-      - "src/browser/execution/**"
-      - "src/browser/CdpConnection.ts"
-      - "src/browser/CdpEndpoint.ts"
-      - "src/browser/CdpTarget*.ts"
-      - "src/browser/CdpCaptureValues.ts"
-      - "src/browser/CdpAuthorized*.ts"
-      - "src/domain/webRuntime.ts"
-      - "src/domain/webExecution.ts"
-      - "src/domain/webEventListeners.ts"
-      - "src/domain/browserObservationError*.ts"
-      - "src/application/WebRuntime*.ts"
-      - "src/composition/webRuntime.ts"
-      - "src/contracts/webRuntimeToolContracts.ts"
-      - "src/contracts/toolEffects.ts"
-      - "src/server/registerWebRuntimeTools.ts"
-      - "src/server/createServer.ts"
-      - "src/cli/webRuntimeCommands.ts"
-      - "src/cli/commandCancellation.ts"
-      - "src/cli.ts"
-      - "package.json"
-      - "package-lock.json"
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
@@ -45,9 +17,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - uses: ./.github/actions/portable-build-cache
       - run: npm run verify:browser:runtime
         env:
           REA_BROWSER_EXECUTABLE: /usr/bin/google-chrome

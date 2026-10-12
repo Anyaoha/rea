@@ -1,6 +1,6 @@
 <div align="center">
 
-[English](README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · **Tiếng Việt** · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md)
+[English](README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · **Tiếng Việt** · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
 
 # REA: Kỹ thuật dịch ngược cho mọi thứ
 
@@ -9,7 +9,6 @@
 **Thấy một tính năng bạn thích? Hiểu cách nó hoạt động, đến tận mức mã nhị phân.**
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](docs/mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
@@ -18,7 +17,7 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
-**[Trang web](https://rea.tools/) · [Hướng dẫn](https://rea.tools/guides/) · [Các nghiên cứu điển hình](https://rea.tools/showcase/)**
+**[Trang web](https://rea.tools/vi/) · [Hướng dẫn](https://rea.tools/vi/guides/) · [Các nghiên cứu điển hình](https://rea.tools/vi/showcase/)**
 
 [Bắt đầu nhanh](#bắt-đầu-nhanh) · [Cách REA hoạt động](#cách-rea-hoạt-động) · [Những gì bạn có thể phân tích](#những-gì-bạn-có-thể-phân-tích) · [Các nghiên cứu điển hình](#các-nghiên-cứu-điển-hình) · [Câu hỏi thường gặp](#câu-hỏi-thường-gặp) · [Tài liệu](#tài-liệu)
 
@@ -54,7 +53,7 @@ REA kết nối tác nhân của bạn với các công cụ kiểm tra tệp nh
 
 Quá trình thiết lập đăng ký REA với tác nhân và cài đặt các hướng dẫn quy trình tương ứng. Phân tích mã máy có thể sử dụng Hopper hoặc Ghidra đã cài sẵn; quá trình thiết lập cũng có thể cài Hopper nếu bạn chấp thuận. Phân tích tĩnh JavaScript không cần công cụ nào trong hai công cụ này.
 
-> **[Truy cập trang web REA](https://rea.tools/)** để xem cách thiết lập, hướng dẫn có hình minh họa và các nghiên cứu điển hình thực tế.
+> **[Truy cập trang web REA](https://rea.tools/vi/)** để xem cách thiết lập, hướng dẫn có hình minh họa và các nghiên cứu điển hình thực tế.
 
 ## Bắt đầu nhanh
 
@@ -133,16 +132,22 @@ REA yêu cầu Node.js 22.x (>=22.19), 24.x (>=24.11) hoặc 26+, cùng với np
 
 | Mục tiêu                      | REA trả về gì                                                                                                   | Yêu cầu và hướng dẫn                                                                                                                          |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tệp nhị phân mã máy           | Mã giả, hợp ngữ, chuỗi, ký hiệu, lời gọi và tham chiếu                                                          | Hopper, Ghidra hoặc IDA; [phân tích mã máy](https://rea.tools/guides/native/)                                                                 |
+| Tệp nhị phân mã máy           | Mã giả, hợp ngữ, chuỗi, ký hiệu, lời gọi và tham chiếu                                                          | Hopper, Ghidra hoặc IDA; [phân tích mã máy](https://rea.tools/vi/guides/native/)                                                              |
 | Bố cục ELF ngoại tuyến        | Các section, segment, ký hiệu/thông tin tái định vị gốc và các biện pháp giảm thiểu có thể có từ phân tích tĩnh | pwntools do bên gọi cung cấp trên Linux x64; [chẩn đoán tệp nhị phân](docs/binary-diagnostics.md)                                             |
-| Bytecode EVM                  | Bộ chọn điều phối, độ lệch byte, tham số suy luận và khả năng thay đổi trạng thái                               | Đầu vào cục bộ chứa byte thô hoặc dạng thập lục phân; [hướng dẫn EVM ngoại tuyến](docs/evm-bytecode.md)                                       |
-| Sự cố Linux đã ghi lại        | Bản ghi note thô, thanh ghi/tín hiệu của mọi luồng được ghi lại và các ứng viên ánh xạ tùy chọn                 | pwntools do bên gọi cung cấp; GDB/pwndbg tùy chọn; [sự cố đã ghi lại](docs/recorded-crashes.md)                                               |
-| JavaScript / Electron         | Mô-đun, các khai báo import, source map, tuyến, IPC và quan hệ với tiện ích mở rộng mã máy                      | Node.js và npm; [phân tích ứng dụng](https://rea.tools/guides/javascript/)                                                                    |
-| Trang web                     | Cấu trúc trang, script, quan sát mạng và ảnh chụp màn hình được yêu cầu                                         | Trình duyệt thuộc họ Chrome; [phân tích trình duyệt](https://rea.tools/guides/browser/)                                                       |
+| Bytecode EVM                  | Bộ chọn điều phối, độ lệch byte, tham số suy luận và khả năng thay đổi trạng thái                               | Đầu vào cục bộ chứa byte thô hoặc dạng thập lục phân trên Linux x64; [hướng dẫn EVM ngoại tuyến](docs/evm-bytecode.md)                        |
+| Sự cố Linux đã ghi lại        | Bản ghi note thô, thanh ghi/tín hiệu của mọi luồng được ghi lại và các ứng viên ánh xạ tùy chọn                 | pwntools do bên gọi cung cấp trên Linux x64; GDB/pwndbg tùy chọn; [sự cố đã ghi lại](docs/recorded-crashes.md)                                |
+| JavaScript / Electron         | Mô-đun, các khai báo import, source map, tuyến, IPC và quan hệ với tiện ích mở rộng mã máy                      | Node.js và npm; [phân tích ứng dụng](https://rea.tools/vi/guides/javascript/)                                                                 |
+| Trang web                     | Cấu trúc trang, script, quan sát mạng và ảnh chụp màn hình được yêu cầu                                         | Trình duyệt thuộc họ Chrome; [phân tích trình duyệt](https://rea.tools/vi/guides/browser/)                                                    |
 | Bản ghi lưu lượng mạng đã lưu | Yêu cầu, phản hồi, payload có thể truy cập và vị trí nguồn                                                      | HAR; mitmdump trên Linux cho bản ghi định dạng gốc của mitmproxy; [hướng dẫn bản ghi mạng](docs/web-network-captures.md)                      |
 | Assembly .NET                 | Siêu dữ liệu, lệnh CIL, các phụ thuộc mã máy được khai báo và so sánh bản dựng                                  | Kiểm tra tĩnh; [hướng dẫn mã được quản lý](docs/managed-code-analysis.md)                                                                     |
-| APK Android                   | Khai báo manifest, lớp, phương thức được dịch ngược và tham chiếu                                               | JADX không giao diện đồ họa và JDK đầy đủ trên Linux/macOS; [hướng dẫn Android](docs/android-analysis.md)                                     |
+| APK Android                   | Khai báo manifest, lớp, phương thức được dịch ngược và tham chiếu                                               | JADX không giao diện đồ họa và JDK đầy đủ trên Linux/macOS/Windows x64; [hướng dẫn Android](docs/android-analysis.md)                         |
+| Thiết bị Android              | Thiết bị, gói, tiến trình, nhật ký, dump, ảnh chụp màn hình và truyền APK/tệp                                   | adb do nơi gọi cung cấp (trình giả lập hoặc thiết bị); [hướng dẫn ADB](docs/adb-device-analysis.md)                                           |
+| Dự án JEB                     | Đơn vị dự án từ engine, hash của artifact và mã giả của kiểu/phương thức                                        | Một ứng dụng JEB do nơi gọi khởi động, phục vụ MCP, chọn bằng REA_JEB_MCP_URL; [hướng dẫn JEB](docs/jeb-analysis.md)                          |
+| Tài nguyên Android            | Manifest đã giải mã, bảng chuỗi, ngôn ngữ và thông tin phiên bản                                                | Trình khởi chạy Apktool do nơi gọi cung cấp; [hướng dẫn tài nguyên](docs/apktool-resource-analysis.md)                                        |
+| Ứng dụng Flutter              | Băm snapshot Dart, hash thư viện theo ABI và nguồn gốc build engine                                             | Không cần (phân tích APK tĩnh); [hướng dẫn Flutter](docs/flutter-analysis.md)                                                                 |
 | Phần sụn                      | Các vùng, kết quả trích xuất và dữ liệu chuyển sang phân tích mã máy                                            | Binwalk / Unblob trên Linux; [hướng dẫn phần sụn](docs/firmware-analysis.md)                                                                  |
+| Gói tin đã ghi                | Trường được chọn, giá trị lặp, bộ lọc và quy tắc giải mã                                                        | Linux: TShark 4.x + prlimit; [hướng dẫn bản ghi gói tin](docs/packet-captures.md)                                                             |
+| Tín hiệu logic đã ghi         | Chú thích bộ giải mã, phạm vi mẫu và chẩn đoán                                                                  | Linux: sigrok-cli 0.7.2 + prlimit; [hướng dẫn tín hiệu](docs/signal-recordings.md)                                                            |
 | Gói và tài nguyên             | Danh sách tệp, giá trị băm, plist, cấu trúc bundle Apple và tài nguyên được trích xuất                          | [Hướng dẫn hiện vật phần mềm và JavaScript](docs/javascript-artifact-reconstruction.md), [ứng dụng Apple](docs/apple-application-analysis.md) |
 | Hành vi tiến trình            | Đầu ra terminal, tương tác, quan sát khi thoát và hệ thống tệp, cùng so sánh các lần chạy                       | Linux/macOS có PTY gốc; [ghi lại tiến trình](docs/process-capture.md)                                                                         |
 
@@ -154,25 +159,25 @@ Kiểm tra tĩnh JavaScript và .NET đọc các tệp được cung cấp mà k
 
 ## Các nghiên cứu điển hình
 
-[![Minh họa các ví dụ về cân bằng âm thanh DX-Ball, cầu nối bảng nhớ tạm Notion và vòng đạn TH04](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+[![Minh họa các ví dụ về cân bằng âm thanh DX-Ball, cầu nối bảng nhớ tạm Notion và vòng đạn TH04](docs/assets/rea-showcases.png)](https://rea.tools/vi/showcase/)
 
 ### DX-Ball: tái tạo phép tính phân bố âm thanh trái phải
 
 Lần theo lời gọi âm thanh đến hàm hỗ trợ chuyển vị trí thành giá trị phân bố âm thanh, kiểm tra các lệnh và chuyển mã giả chưa đầy đủ sang C. Bản tái tạo vượt qua 3.205 trường hợp kiểm thử với x86 gốc và tái tạo đủ 63 byte của hàm đã biên dịch.
 
-[Đọc nghiên cứu điển hình](https://rea.tools/showcase/dx-ball/) · [Kho mã tái tạo](https://github.com/N0zoM1z0/dx-ball)
+[Đọc nghiên cứu điển hình](https://rea.tools/vi/showcase/dx-ball/) · [Kho mã tái tạo](https://github.com/N0zoM1z0/dx-ball)
 
 ### Notion: lần theo cầu nối clipboard của Electron
 
 Tìm API clipboard trong tiến trình kết xuất, lần theo qua preload và IPC đến tiến trình chính, rồi kiểm tra định dạng clipboard có dữ liệu định dạng phong phú.
 
-[Đọc nghiên cứu điển hình](https://rea.tools/showcase/notion/)
+[Đọc nghiên cứu điển hình](https://rea.tools/vi/showcase/notion/)
 
 ### TH04: khôi phục phép tính vòng đạn trong DOS
 
 Kiểm tra các lệnh 16 bit của trò chơi PC-98 gốc, khôi phục phép tính góc cố định và góc nhắm mục tiêu, rồi so sánh C++ được tái tạo với đầu ra của trình biên dịch thời đó.
 
-[Đọc nghiên cứu điển hình](https://rea.tools/showcase/th04/) · [Kho mã tái tạo](https://github.com/N0zoM1z0/th04)
+[Đọc nghiên cứu điển hình](https://rea.tools/vi/showcase/th04/) · [Kho mã tái tạo](https://github.com/N0zoM1z0/th04)
 
 Nếu bạn dùng REA cho một mục tiêu thú vị, chúng tôi muốn biết. Chia sẻ trường hợp của bạn qua [issue](https://github.com/morluto/rea/issues) hoặc [pull request](https://github.com/morluto/rea/pulls), nêu mục tiêu, câu hỏi, cách REA giúp bạn và những gì tìm được.
 
@@ -243,7 +248,7 @@ Nếu dùng tác nhân, hãy hoàn tất [làm mới thiết lập](#cập-nhậ
 
 ## Tài liệu
 
-Bắt đầu với [hướng dẫn thực hành](https://rea.tools/guides/) trên trang web. Để biết tùy chọn cụ thể, điều kiện tiên quyết và hợp đồng kết quả:
+Bắt đầu với [hướng dẫn thực hành](https://rea.tools/vi/guides/) trên trang web. Để biết tùy chọn cụ thể, điều kiện tiên quyết và hợp đồng kết quả:
 
 - [Cài đặt và thiết lập](docs/installation.md): đăng ký tác nhân, cấu hình trình phân tích, cập nhật và gỡ cài đặt.
 - [Kiểm tra mức sẵn sàng và khắc phục sự cố](docs/installation.md#check-readiness-for-your-task): chẩn đoán một tác nhân hoặc bộ máy phân tích cụ thể.
@@ -256,7 +261,7 @@ Báo cáo lỗ hổng theo [SECURITY.md](SECURITY.md).
 
 ## Lịch sử sao
 
-🎉 **50.000 sao trên GitHub — xin cảm ơn!**
+🎉 **110.000 sao trên GitHub — xin cảm ơn!**
 
 Cảm ơn mọi người đã sử dụng REA, báo lỗi, đề xuất tính năng, kiểm thử bản dựng và đóng góp bản sửa lỗi.
 
@@ -270,7 +275,13 @@ Cảm ơn mọi người đã sử dụng REA, báo lỗi, đề xuất tính n�
 
 ## Miễn trừ trách nhiệm
 
-REA cung cấp công cụ cho nghiên cứu dịch ngược, phân tích và tái tạo hợp pháp. Bạn có trách nhiệm có được các quyền cho phép cần thiết và tuân thủ luật áp dụng. Dự án không ủng hộ việc sử dụng trái pháp luật hoặc không được cho phép.
+Xem [DISCLAIMER.md](DISCLAIMER.md) để biết hướng dẫn sử dụng có trách nhiệm.
+
+REA dành cho nghiên cứu, giáo dục, khả năng tương tác, bảo tồn phần mềm và phân tích phần mềm bạn sở hữu hoặc được phép kiểm tra, trong khuôn khổ pháp luật.
+
+The project's position on illegal or unauthorized use covers all REA
+versions, distribution channels, and platforms; each copy retains its
+applicable licenses.
 
 ## Đóng góp
 
@@ -281,3 +292,15 @@ Xem [CONTRIBUTING.md](CONTRIBUTING.md) về thiết lập môi trường phát t
 ## Giấy phép
 
 [MIT](LICENSE)
+
+REA-authored code is licensed under MIT. Third-party material retains its own
+licenses and copyright notices; see [Third-party notices](THIRD_PARTY_NOTICES.md)
+for the dependency inventory, preserved license texts, and external-tool terms.
+
+**You must legally obtain and be authorized to use commercial tools**, including
+IDA Pro / Hex-Rays decompilers, Hopper, and JEB, under their applicable licenses.
+REA grants no tool license, key, or activation entitlement. Trials and demos
+remain subject to vendor terms, including user, feature, automation, and output
+sharing restrictions. Cracked copies, stolen keys, unauthorized key sharing,
+and bypassing license restrictions are not authorized. This guidance does not
+amend MIT or third-party licenses.

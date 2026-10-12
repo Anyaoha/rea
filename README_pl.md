@@ -1,6 +1,6 @@
 <div align="center">
 
-[English](README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · **Polski** · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md)
+[English](README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · **Polski** · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
 
 # REA: Reverse Engineer Anything
 
@@ -9,7 +9,6 @@
 **Widzisz funkcję, która Ci się podoba? Dowiedz się, jak działa, aż do poziomu kodu binarnego.**
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](docs/mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
@@ -18,7 +17,7 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
-**[Strona internetowa](https://rea.tools/) · [Przewodniki](https://rea.tools/guides/) · [Przykłady zastosowań](https://rea.tools/showcase/)**
+**[Strona internetowa](https://rea.tools/pl/) · [Przewodniki](https://rea.tools/pl/guides/) · [Przykłady zastosowań](https://rea.tools/pl/showcase/)**
 
 [Szybki start](#szybki-start) · [Jak działa REA](#jak-działa-rea) · [Co możesz analizować](#co-możesz-analizować) · [Przykłady zastosowań](#przykłady-zastosowań) · [FAQ](#faq) · [Dokumentacja](#dokumentacja)
 
@@ -54,7 +53,7 @@ REA łączy Twojego agenta z narzędziami do analizy natywnych plików binarnych
 
 Konfigurator rejestruje REA w Twoim agencie i instaluje pasujące instrukcje pracy. Analiza kodu natywnego może korzystać z istniejącej instalacji Hoppera lub Ghidry; konfigurator może też zainstalować Hoppera po uzyskaniu zgody. Statyczna analiza JavaScript nie wymaga żadnego z tych silników.
 
-> **[Odwiedź stronę REA](https://rea.tools/)**, aby znaleźć instrukcje konfiguracji, ilustrowane przewodniki i rzeczywiste studia przypadków.
+> **[Odwiedź stronę REA](https://rea.tools/pl/)**, aby znaleźć instrukcje konfiguracji, ilustrowane przewodniki i rzeczywiste studia przypadków.
 
 ## Szybki start
 
@@ -133,16 +132,22 @@ REA wymaga Node.js 22.x (>=22.19), 24.x (>=24.11) lub 26+ oraz npm. Dodatkowe na
 
 | Cel                                     | Co zwraca REA                                                                                                         | Wymagania i przewodnik                                                                                                                  |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Natywne pliki binarne                   | Pseudokod, kod asemblera, ciągi znaków, symbole, wywołania i odwołania                                                | Hopper, Ghidra lub IDA; [analiza kodu natywnego](https://rea.tools/guides/native/)                                                      |
+| Natywne pliki binarne                   | Pseudokod, kod asemblera, ciągi znaków, symbole, wywołania i odwołania                                                | Hopper, Ghidra lub IDA; [analiza kodu natywnego](https://rea.tools/pl/guides/native/)                                                   |
 | Układ pliku ELF w trybie offline        | Sekcje, segmenty, oryginalne symbole/relokacje i potencjalne mechanizmy zabezpieczeń wskazane przez analizę statyczną | pwntools dostarczone przez użytkownika w systemie Linux x64; [diagnostyka plików binarnych](docs/binary-diagnostics.md)                 |
-| Kod bajtowy EVM                         | Selektory wywołań, przesunięcia bajtowe, wywnioskowane argumenty i mutowalność                                        | Lokalny plik z surowymi bajtami lub zapisem szesnastkowym; [przewodnik EVM offline](docs/evm-bytecode.md)                               |
-| Zarejestrowane awarie systemu Linux     | Surowe rekordy note, rejestry/sygnały każdego zarejestrowanego wątku i opcjonalni kandydaci na mapowania              | pwntools dostarczone przez użytkownika; opcjonalnie GDB/pwndbg; [zarejestrowane awarie](docs/recorded-crashes.md)                       |
-| JavaScript / Electron                   | Moduły, importy, mapy źródeł, trasy, IPC i powiązania z natywnymi dodatkami                                           | Node.js i npm; [analiza aplikacji](https://rea.tools/guides/javascript/)                                                                |
-| Strony internetowe                      | Struktura strony, skrypty, obserwacje sieciowe i zamówione zrzuty ekranu                                              | Przeglądarka z rodziny Chrome; [analiza w przeglądarce](https://rea.tools/guides/browser/)                                              |
+| Kod bajtowy EVM                         | Selektory wywołań, przesunięcia bajtowe, wywnioskowane argumenty i mutowalność                                        | Lokalny plik z surowymi bajtami lub zapisem szesnastkowym w systemie Linux x64; [przewodnik EVM offline](docs/evm-bytecode.md)          |
+| Zarejestrowane awarie systemu Linux     | Surowe rekordy note, rejestry/sygnały każdego zarejestrowanego wątku i opcjonalni kandydaci na mapowania              | pwntools dostarczone przez użytkownika w systemie Linux x64; opcjonalnie GDB/pwndbg; [zarejestrowane awarie](docs/recorded-crashes.md)  |
+| JavaScript / Electron                   | Moduły, importy, mapy źródeł, trasy, IPC i powiązania z natywnymi dodatkami                                           | Node.js i npm; [analiza aplikacji](https://rea.tools/pl/guides/javascript/)                                                             |
+| Strony internetowe                      | Struktura strony, skrypty, obserwacje sieciowe i zamówione zrzuty ekranu                                              | Przeglądarka z rodziny Chrome; [analiza w przeglądarce](https://rea.tools/pl/guides/browser/)                                           |
 | Zapisane przechwycenia ruchu sieciowego | Żądania, odpowiedzi, dostępne dane przesyłane i lokalizacje źródłowe                                                  | HAR; mitmdump w systemie Linux dla natywnych przechwyceń mitmproxy; [przewodnik przechwytywania](docs/web-network-captures.md)          |
 | Zestawy .NET                            | Metadane, instrukcje CIL, zadeklarowane zależności natywne i porównania kompilacji                                    | Analiza statyczna; [przewodnik kodu zarządzanego](docs/managed-code-analysis.md)                                                        |
-| Pakiety APK dla Androida                | Deklaracje manifestu, klasy, zdekompilowane metody i odwołania                                                        | JADX bez interfejsu graficznego i pełny JDK w systemie Linux/macOS; [przewodnik Androida](docs/android-analysis.md)                     |
+| Pakiety APK dla Androida                | Deklaracje manifestu, klasy, zdekompilowane metody i odwołania                                                        | JADX bez interfejsu graficznego i pełny JDK w systemach Linux/macOS/Windows x64; [przewodnik Androida](docs/android-analysis.md)        |
+| Urządzenia z Androidem                  | Urządzenia, pakiety, procesy, logi, zrzuty, zrzuty ekranu oraz transfery APK/plików                                   | adb dostarczony przez wywołującego (emulator lub urządzenie); [przewodnik ADB](docs/adb-device-analysis.md)                             |
+| Projekty JEB                            | Jednostki projektu obsługiwane przez silnik, skróty artefaktów i pseudokod typów/metod                                | Uruchomiony przez wywołującego klient JEB udostępniający MCP, wybrany przez REA_JEB_MCP_URL; [przewodnik JEB](docs/jeb-analysis.md)     |
+| Zasoby Androida                         | Zdekodowany manifest, tablice ciągów, języki i informacje o wersji                                                    | Należący do wywołującego launcher Apktool; [przewodnik zasobów](docs/apktool-resource-analysis.md)                                      |
+| Aplikacje Flutter                       | Hash migawki Dart, sumy bibliotek per ABI i pochodzenie kompilacji silnika                                            | Brak (statyczna analiza APK); [przewodnik Flutter](docs/flutter-analysis.md)                                                            |
 | Oprogramowanie układowe                 | Regiony, wyniki wyodrębniania i przekazanie do analizy kodu natywnego                                                 | Binwalk / Unblob w systemie Linux; [przewodnik oprogramowania układowego](docs/firmware-analysis.md)                                    |
+| Zapisane pakiety                        | Wybrane pola, powtarzane wartości, filtry i reguły dekodowania                                                        | Linux: TShark 4.x + prlimit; [przewodnik po przechwyconych pakietach](docs/packet-captures.md)                                          |
+| Zapisane sygnały logiczne               | Adnotacje dekodera, zakresy próbek i diagnostyka                                                                      | Linux: sigrok-cli 0.7.2 + prlimit; [przewodnik po sygnałach](docs/signal-recordings.md)                                                 |
 | Pakiety i zasoby                        | Spisy plików, skróty, pliki plist, struktura pakietów Apple i wyodrębnione zasoby                                     | [Przewodnik artefaktów i JavaScript](docs/javascript-artifact-reconstruction.md), [aplikacje Apple](docs/apple-application-analysis.md) |
 | Zachowanie procesów                     | Wyjście terminala, interakcje, obserwacje zakończenia i systemu plików oraz porównania uruchomień                     | Linux/macOS z natywnym PTY; [przechwytywanie procesów](docs/process-capture.md)                                                         |
 
@@ -154,25 +159,25 @@ Obsługiwane formaty natywne i platformy zależą od dostawcy analizy. Zobacz [k
 
 ## Przykłady zastosowań
 
-[![Ilustracje studiów przypadku panoramowania dźwięku w DX-Ball, mostka schowka w Notion i pierścienia pocisków w TH04](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+[![Ilustracje studiów przypadku panoramowania dźwięku w DX-Ball, mostka schowka w Notion i pierścienia pocisków w TH04](docs/assets/rea-showcases.png)](https://rea.tools/pl/showcase/)
 
 ### DX-Ball: odtworzenie obliczania panoramy dźwięku
 
 Prześledź wywołanie dźwięku do funkcji pomocniczej przeliczającej pozycję na panoramę, sprawdź instrukcje i przekształć niepełny pseudokod w C. Odtworzona implementacja przechodzi 3 205 przypadków dla oryginalnego x86 i odtwarza wszystkie 63 bajty skompilowanej funkcji.
 
-[Przeczytaj studium przypadku](https://rea.tools/showcase/dx-ball/) · [Repozytorium odtworzonej implementacji](https://github.com/N0zoM1z0/dx-ball)
+[Przeczytaj studium przypadku](https://rea.tools/pl/showcase/dx-ball/) · [Repozytorium odtworzonej implementacji](https://github.com/N0zoM1z0/dx-ball)
 
 ### Notion: śledzenie mostu schowka w Electron
 
 Znajdź API schowka w procesie renderującym, prześledź je przez preload i IPC do procesu głównego, a następnie sprawdź format schowka wraz z danymi formatowania.
 
-[Przeczytaj studium przypadku](https://rea.tools/showcase/notion/)
+[Przeczytaj studium przypadku](https://rea.tools/pl/showcase/notion/)
 
 ### TH04: odtworzenie obliczania pierścienia pocisków w DOS-ie
 
 Sprawdź 16-bitowe instrukcje oryginalnej gry na PC-98, odtwórz obliczenia kątów stałych i skierowanych na cel oraz porównaj odtworzony C++ z wynikiem historycznego kompilatora.
 
-[Przeczytaj studium przypadku](https://rea.tools/showcase/th04/) · [Repozytorium odtworzonej implementacji](https://github.com/N0zoM1z0/th04)
+[Przeczytaj studium przypadku](https://rea.tools/pl/showcase/th04/) · [Repozytorium odtworzonej implementacji](https://github.com/N0zoM1z0/th04)
 
 Jeśli użyłeś REA do czegoś ciekawego, chętnie to zobaczymy. Opisz swój przypadek w [zgłoszeniu](https://github.com/morluto/rea/issues) lub [pull requeście](https://github.com/morluto/rea/pulls), podając cel analizy, pytanie, sposób, w jaki REA pomogło, i swoje ustalenia.
 
@@ -243,7 +248,7 @@ Jeśli używasz agenta, wykonaj [odświeżenie konfiguracji](#zaktualizuj-rea) i
 
 ## Dokumentacja
 
-Zacznij od [przewodników z przykładami](https://rea.tools/guides/) na stronie internetowej. Dokładne opcje, wymagania wstępne i kontrakty wyników opisano tutaj:
+Zacznij od [przewodników z przykładami](https://rea.tools/pl/guides/) na stronie internetowej. Dokładne opcje, wymagania wstępne i kontrakty wyników opisano tutaj:
 
 - [Instalacja i konfiguracja](docs/installation.md): rejestracja agentów, konfiguracja dostawców analizy, aktualizacje i odinstalowanie.
 - [Gotowość i rozwiązywanie problemów](docs/installation.md#check-readiness-for-your-task): diagnostyka jednego agenta lub silnika analizy.
@@ -256,7 +261,7 @@ Zgłaszaj podatności zgodnie z [SECURITY.md](SECURITY.md).
 
 ## Historia gwiazdek
 
-🎉 **50 000 gwiazdek na GitHubie — dziękujemy!**
+🎉 **110 000 gwiazdek na GitHubie — dziękujemy!**
 
 Dziękujemy wszystkim, którzy używają REA, zgłaszają błędy, proponują nowe funkcje, testują kompilacje i przesyłają poprawki.
 
@@ -270,7 +275,13 @@ Dziękujemy wszystkim, którzy używają REA, zgłaszają błędy, proponują no
 
 ## Zastrzeżenie
 
-REA dostarcza narzędzia do zgodnych z prawem badań z zakresu inżynierii wstecznej, analizy i odtwarzania. Odpowiadasz za uzyskanie wymaganych zezwoleń i przestrzeganie obowiązującego prawa. Projekt nie popiera działań nielegalnych ani nieautoryzowanych.
+Wskazówki dotyczące odpowiedzialnego korzystania znajdziesz w [DISCLAIMER.md](DISCLAIMER.md).
+
+REA służy zgodnym z prawem badaniom, edukacji, zapewnianiu interoperacyjności, zachowaniu oprogramowania oraz analizie oprogramowania, które posiadasz lub masz prawo badać.
+
+The project's position on illegal or unauthorized use covers all REA
+versions, distribution channels, and platforms; each copy retains its
+applicable licenses.
 
 ## Współtworzenie
 
@@ -281,3 +292,15 @@ Zobacz [CONTRIBUTING.md](CONTRIBUTING.md), aby poznać konfigurację środowiska
 ## Licencja
 
 [MIT](LICENSE)
+
+REA-authored code is licensed under MIT. Third-party material retains its own
+licenses and copyright notices; see [Third-party notices](THIRD_PARTY_NOTICES.md)
+for the dependency inventory, preserved license texts, and external-tool terms.
+
+**You must legally obtain and be authorized to use commercial tools**, including
+IDA Pro / Hex-Rays decompilers, Hopper, and JEB, under their applicable licenses.
+REA grants no tool license, key, or activation entitlement. Trials and demos
+remain subject to vendor terms, including user, feature, automation, and output
+sharing restrictions. Cracked copies, stolen keys, unauthorized key sharing,
+and bypassing license restrictions are not authorized. This guidance does not
+amend MIT or third-party licenses.

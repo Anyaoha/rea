@@ -7,7 +7,10 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "./ProviderProcess.js";
-import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
+import {
+  cleanupOwnedProcessGroup,
+  type ProcessCleanupFailure,
+} from "./ProcessOwnership.js";
 import {
   ProviderStartupDeadline,
   waitForAbortableDelay,
@@ -15,15 +18,19 @@ import {
 
 /** A short-lived command failed its lifecycle or complete-output contract. */
 export class OwnedCommandFailure extends Error {
+  readonly cleanupResult: ProcessCleanupFailure | undefined;
+
   constructor(
     readonly reason: "cancelled" | "timeout" | "output-limit" | "process",
     message: string,
     readonly snapshot: ProviderProcessSnapshot | null = null,
     readonly cleanupFailure: string | null = null,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { readonly cleanupResult?: ProcessCleanupFailure },
     readonly resources: readonly string[] = [],
+    readonly cleanupOwner?: ProviderProcessSupervisor,
   ) {
     super(message, options);
+    this.cleanupResult = options?.cleanupResult;
   }
 }
 
@@ -38,6 +45,8 @@ export const runOwnedCommand = async (
   },
   options: {
     readonly signal?: AbortSignal;
+    /** Synchronously accept unresolved cleanup ownership; execution still returns its original outcome. Must not throw. */
+    readonly retainCleanup?: (owner: ProviderProcessSupervisor) => void;
     readonly launcher?: (
       input: OwnedProviderProcessSpawnOptions,
     ) => Promise<SpawnedOwnedProviderProcess>;
@@ -57,6 +66,7 @@ export const runOwnedCommand = async (
       options.launcher ?? spawnOwnedProviderProcess,
       deadline,
       callerSignal,
+      options.retainCleanup,
     );
   } finally {
     deadline.dispose();
@@ -75,6 +85,7 @@ const collectOwnedCommand = async (
   ) => Promise<SpawnedOwnedProviderProcess>,
   deadline: ProviderStartupDeadline,
   callerSignal?: AbortSignal,
+  retainCleanup?: (owner: ProviderProcessSupervisor) => void,
 ): Promise<ProviderProcessSnapshot> => {
   const signal = deadline.signal;
   let launched: SpawnedOwnedProviderProcess;
@@ -183,20 +194,27 @@ const collectOwnedCommand = async (
   }
   const stopped = await supervisor.stop();
   const snapshot = supervisor.snapshot();
-  supervisor.dispose();
-  if (stopped.status === "incomplete")
+  if (stopped.status === "incomplete" && retainCleanup !== undefined)
+    retainCleanup(supervisor);
+  else if (stopped.status === "incomplete")
     throw new OwnedCommandFailure(
       failure?.reason ?? "process",
       failure?.message ?? "Command cleanup failed.",
       snapshot,
       stopped.reason,
-      failure === undefined ? undefined : { cause: failure },
+      {
+        ...(failure === undefined ? {} : { cause: failure }),
+        ...(stopped.cleanupResult === undefined
+          ? {}
+          : { cleanupResult: stopped.cleanupResult }),
+      },
       [
         spawn.runId,
         ...(spawn.cwd === undefined ? [] : [spawn.cwd]),
         `pid:${launched.ownership.leaderPid}`,
         `process-group:${launched.ownership.processGroupId}`,
       ],
+      supervisor,
     );
   if (failure !== undefined)
     throw new OwnedCommandFailure(
@@ -204,7 +222,12 @@ const collectOwnedCommand = async (
       failure.message,
       snapshot,
       failure.cleanupFailure,
-      { cause: failure },
+      {
+        cause: failure,
+        ...(failure.cleanupResult === undefined
+          ? {}
+          : { cleanupResult: failure.cleanupResult }),
+      },
       failure.resources,
     );
   if (callerSignal?.aborted)

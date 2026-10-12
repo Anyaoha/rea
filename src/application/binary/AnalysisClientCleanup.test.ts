@@ -5,10 +5,8 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err } from "../../domain/result.js";
 import type { AnalysisClient } from "../AnalysisProvider.js";
-import {
-  analysisErrorWithCleanupFailure,
-  closeAnalysisClient,
-} from "./AnalysisClientCleanup.js";
+import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 
 const clientClosingWith = (cause: unknown): AnalysisClient => ({
   execute: () => Promise.resolve(err(new ProviderCleanupError("x", [], {}))),
@@ -73,5 +71,9 @@ it("preserves the original explanation and collected output alongside cleanup un
       },
     },
   });
-  expect(combined.cause).toBe(primary);
+  expect(combined.cause).toBeInstanceOf(AggregateError);
+  expect(combined.cause).toMatchObject({
+    cause: primary,
+    errors: [primary, cleanup],
+  });
 });

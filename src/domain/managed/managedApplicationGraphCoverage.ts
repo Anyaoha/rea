@@ -4,6 +4,7 @@ import type {
   ManagedMemberInspection,
   ManagedNativeBoundaryInspection,
 } from "./managedArtifact.js";
+import { managedTokenScopesMatch } from "./managedInspectionEvidence.js";
 
 type ManagedCoverageState = "complete" | "partial" | "unavailable";
 
@@ -17,7 +18,15 @@ export interface ManagedGraphCoverageSources {
 /** Whether any supplied source has incomplete coverage. */
 export interface ManagedGraphProjectionOmissions {
   readonly partialInput: boolean;
+  readonly unscopedTokenRelationships: boolean;
+  /** Declaring types the member Evidence selected; null when it inspected every type. */
+  readonly selectedTypes: readonly string[] | null;
 }
+
+const omitsAny = (omissions: ManagedGraphProjectionOmissions): boolean =>
+  omissions.partialInput ||
+  omissions.unscopedTokenRelationships ||
+  omissions.selectedTypes !== null;
 
 const completeCoverage = (): ApplicationGraphEvidence["coverage"] => ({
   status: "complete",
@@ -43,18 +52,30 @@ export const managedSourceCoverage = (
 export const assessManagedGraphOmissions = (
   sources: ManagedGraphCoverageSources,
 ): ManagedGraphProjectionOmissions => ({
+  unscopedTokenRelationships:
+    sources.members !== null &&
+    sources.boundaries !== null &&
+    (sources.boundaries.pinvoke_imports.some(
+      ({ member_token }) => member_token !== null,
+    ) ||
+      sources.boundaries.native_implementations.length > 0) &&
+    !managedTokenScopesMatch(
+      sources.members.identity_scope.requires_mvid,
+      sources.boundaries.identity_scope.requires_mvid,
+    ),
   partialInput: [
     sources.members?.coverage.state,
     sources.boundaries?.coverage.state,
     sources.artifact?.coverage.state,
   ].some((state) => state !== undefined && state !== "complete"),
+  selectedTypes: sources.members?.selection?.type_names ?? null,
 });
 
 /** Derive graph coverage solely from the coverage of supplied source evidence. */
 export const managedGraphEvidenceCoverage = (
   omissions: ManagedGraphProjectionOmissions,
 ): ApplicationGraphEvidence["coverage"] =>
-  omissions.partialInput
+  omitsAny(omissions)
     ? {
         status: "partial",
         truncated: false,
@@ -67,7 +88,7 @@ export const managedGraphEvidenceCoverage = (
 export const managedGraphResultCoverage = (
   omissions: ManagedGraphProjectionOmissions,
 ) => ({
-  status: omissions.partialInput
+  status: omitsAny(omissions)
     ? ("partial" as const)
     : ("complete-within-inputs" as const),
 });

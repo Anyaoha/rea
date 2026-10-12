@@ -18,7 +18,9 @@ export const workflowAnalysisProfile = (
 ): AnalysisProfileCommitment =>
   createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
     upstream_analysis_profile: upstream,
-    ...(operation === "binary_overview" || operation === "batch_decompile"
+    ...(operation === "binary_overview" ||
+    operation === "batch_decompile" ||
+    operation === "get_call_graph"
       ? { workflow_revision: 2 }
       : {}),
   });
@@ -34,6 +36,13 @@ export const ARTIFACT_GRAPH_PROVIDER = Object.freeze({
 export const MANAGED_STATIC_PROVIDER = Object.freeze({
   id: "rea-dotnet-static",
   name: "REA managed static analysis provider",
+  version: "1",
+} as const);
+
+/** Provider identity for portable, execution-free PE resource decoding. */
+export const PE_RESOURCES_PROVIDER = Object.freeze({
+  id: "rea-pe-resources",
+  name: "REA PE resource parser",
   version: "1",
 } as const);
 
@@ -55,6 +64,13 @@ export const APPLE_APPLICATION_PROVIDER = {
 export const ANDROID_APPLICATION_PROVIDER = {
   id: "rea-android-application",
   name: "REA Android application workflows",
+  version: "1",
+} as const;
+
+/** Provider identity for deterministic HarmonyOS application projections. */
+export const HARMONY_APPLICATION_PROVIDER = {
+  id: "rea-harmony-application",
+  name: "REA HarmonyOS application workflows",
   version: "1",
 } as const;
 

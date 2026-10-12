@@ -15,10 +15,21 @@ import type { ProgressReporter } from "./ProgressReporter.js";
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
 import type { ProcessLineageObservation } from "../process/ProcessOwnership.js";
 import type { ProviderOperationHealth } from "../domain/providerOperationHealth.js";
+import {
+  relationshipCoverageSchema,
+  type RelationshipCoverage,
+} from "../domain/relationshipCoverage.js";
 
 export interface ExecutionOptions {
   readonly signal?: AbortSignal;
   readonly progress?: ProgressReporter;
+  /**
+   * Set when a procedure selector came from provider output, such as a
+   * revisited callee, rather than from the caller. A provider-derived
+   * selector is never the caller's input mistake. Absent means the caller
+   * supplied it.
+   */
+  readonly selectorOrigin?: "provider";
 }
 
 /** Closed operations accepted by provider-backed analysis sessions. */
@@ -37,6 +48,8 @@ export interface AnalysisExecution {
   readonly provider: ProviderIdentity;
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly limitations: readonly string[];
+  /** Provider-owned completeness assessment for caller/callee observations. */
+  readonly relationshipCoverage?: RelationshipCoverage;
   readonly locations: readonly EvidenceLocation[];
   readonly subject: EvidenceSubjectTarget | null;
 }
@@ -55,6 +68,7 @@ export const createAnalysisExecution = (
     readonly rawResult?: unknown;
     readonly analysisProfile?: AnalysisProfileCommitment;
     readonly limitations?: readonly string[];
+    readonly relationshipCoverage?: RelationshipCoverage;
     readonly locations?: readonly EvidenceLocation[];
     readonly subject?: EvidenceSubjectTarget;
   } = {},
@@ -69,6 +83,13 @@ export const createAnalysisExecution = (
     ? {}
     : { analysisProfile: structuredClone(options.analysisProfile) }),
   limitations: [...(options.limitations ?? [])],
+  ...(options.relationshipCoverage === undefined
+    ? {}
+    : {
+        relationshipCoverage: relationshipCoverageSchema.parse(
+          options.relationshipCoverage,
+        ),
+      }),
   locations: [...(options.locations ?? [])],
   subject: options.subject ?? null,
 });
@@ -102,6 +123,12 @@ export interface ProviderRequestActivitySnapshot {
 
 /** Provider session bound to exactly one parsed artifact. */
 export interface AnalysisClient extends AnalysisOperationPort {
+  /** Execute only if this operation can run without loading or starting a provider. */
+  executeIfReady?(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError> | undefined>;
   /** Retained token-verified process snapshots for dynamic providers this client started. */
   runtimeLineageSnapshots?(): readonly ProviderRuntimeLineageSnapshot[];
   /** Current provider work that may outlive a timed-out or cancelled caller. */

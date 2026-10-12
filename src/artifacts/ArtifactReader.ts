@@ -26,10 +26,69 @@ export interface ArtifactEntry {
   readonly adapterKey: string;
   /** Filesystem identity captured during traversal, when supplied by an adapter. */
   readonly sourceIdentity?: {
-    readonly device: number;
-    readonly inode: number;
+    readonly device: bigint;
+    readonly inode: bigint;
+    readonly size: bigint;
+    readonly mode: bigint;
+    readonly mtimeNs: bigint;
+    readonly ctimeNs: bigint;
   };
 }
+
+/** Compare captured filesystem identity and mutable metadata at a read boundary. */
+export const sameArtifactSourceIdentity = (
+  expected: ArtifactEntry["sourceIdentity"],
+  observed: {
+    readonly dev: bigint;
+    readonly ino: bigint;
+    readonly size: bigint;
+    readonly mode: bigint;
+    readonly mtimeNs: bigint;
+    readonly ctimeNs: bigint;
+  },
+): boolean =>
+  expected !== undefined &&
+  observed.dev === expected.device &&
+  observed.ino === expected.inode &&
+  observed.size === expected.size &&
+  observed.mode === expected.mode &&
+  observed.mtimeNs === expected.mtimeNs &&
+  observed.ctimeNs === expected.ctimeNs;
+
+/** Snapshot mutable entry metadata before the producer later validates open(). */
+export const copyArtifactEntry = (entry: ArtifactEntry): ArtifactEntry => ({
+  ...entry,
+  limitations: [...entry.limitations],
+  ...(entry.sourceIdentity === undefined
+    ? {}
+    : { sourceIdentity: { ...entry.sourceIdentity } }),
+});
+
+/** Compare every portable and adapter-owned fact supplied with an entry. */
+export const sameArtifactEntry = (
+  entry: ArtifactEntry,
+  produced: ArtifactEntry,
+): boolean =>
+  entry.path === produced.path &&
+  entry.kind === produced.kind &&
+  entry.declaredSize === produced.declaredSize &&
+  entry.compressedSize === produced.compressedSize &&
+  entry.executable === produced.executable &&
+  entry.encrypted === produced.encrypted &&
+  entry.byteOffset === produced.byteOffset &&
+  entry.declaredSha256 === produced.declaredSha256 &&
+  entry.unpacked === produced.unpacked &&
+  entry.adapterKey === produced.adapterKey &&
+  entry.limitations.length === produced.limitations.length &&
+  entry.limitations.every(
+    (limitation, index) => limitation === produced.limitations[index],
+  ) &&
+  entry.sourceIdentity?.device === produced.sourceIdentity?.device &&
+  entry.sourceIdentity?.inode === produced.sourceIdentity?.inode &&
+  entry.sourceIdentity?.size === produced.sourceIdentity?.size &&
+  entry.sourceIdentity?.mode === produced.sourceIdentity?.mode &&
+  entry.sourceIdentity?.mtimeNs === produced.sourceIdentity?.mtimeNs &&
+  entry.sourceIdentity?.ctimeNs === produced.sourceIdentity?.ctimeNs;
 
 /** Read-only adapter over one directory, archive, or virtual container. */
 export interface ArtifactReader {

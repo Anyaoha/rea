@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -7,6 +8,8 @@ import { expect, it, onTestFinished } from "vitest";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { compareProcessCaptures } from "../../../src/domain/process/processComparison.js";
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
+import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
+import { FINALIZED_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -58,6 +61,129 @@ const captureViaMcp = async (scenario: Record<string, unknown>) => {
   return evidence;
 };
 
+it("documents a finalization scenario and exit record that match the contract", async () => {
+  const document = await readFile("docs/process-capture.md", "utf8");
+  const blocks = [
+    ...(document.split("### Finalization interval")[1] ?? "").matchAll(
+      /```json\n([\s\S]*?)\n```/gu,
+    ),
+  ].map((match) => match[1]);
+  const [scenario, exit] = blocks;
+  if (scenario === undefined || exit === undefined)
+    throw new Error("Missing finalization examples");
+
+  expect(
+    parseProcessScenario(JSON.parse(scenario)).finalization_ms,
+    "the documented scenario is accepted and carries the interval",
+  ).toBe(1_500);
+  expect(
+    JSON.parse(exit),
+    "the documented exit record is the canonical finalized example",
+  ).toEqual(FINALIZED_PROCESS_CAPTURE_EXAMPLE.exit);
+});
+
+itWithCaptureCapability.each(["cli", "mcp"] as const)(
+  "hashes the documented complete report despite omitted terminal output through %s",
+  async (adapter) => {
+    const document = await readFile("docs/process-capture.md", "utf8");
+    const example = document
+      .split("## Hash a report independently of terminal output")[1]
+      ?.match(/```json\n([\s\S]*?)\n```/u)?.[1];
+    if (example === undefined)
+      throw new Error("Missing report capture example");
+    const scenario = parseProcessScenario(JSON.parse(example));
+    const root = await createTestTempDirectory("rea-full-report-adapter-");
+    const evidence = await (adapter === "cli" ? captureViaCli : captureViaMcp)({
+      ...scenario,
+      executable: process.execPath,
+      working_directory: root,
+      filesystem_observation_paths: [join(root, "reports")],
+    });
+    const capture = parseProcessCapture(evidence.normalized_result);
+    const bytes = await readFile(join(root, "reports", "final.json"));
+    expect(JSON.parse(bytes.toString())).toEqual({
+      status: "complete",
+      data: "X".repeat(131072),
+    });
+    expect(bytes.length).toBeGreaterThan(scenario.limits.output_bytes);
+    expect(capture.files_after).toContainEqual(
+      expect.objectContaining({
+        path: "root_0:final.json",
+        size: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      }),
+    );
+    expect(capture.truncation_details.filesystem_after).toMatchObject({
+      enumeration_truncated: false,
+      hash_budget_bytes: scenario.limits.file_bytes,
+      hashed_bytes: bytes.length,
+      hash_omissions: [],
+    });
+    expect(capture.truncation_details.raw_terminal.retained_bytes).toBeLessThan(
+      capture.truncation_details.raw_terminal.observed_bytes,
+    );
+  },
+  20_000,
+);
+
+itWithCaptureCapability.each(["cli", "mcp"] as const)(
+  "accounts for exact cumulative hash budgets independently at each %s checkpoint",
+  async (adapter) => {
+    const runCapture = adapter === "cli" ? captureViaCli : captureViaMcp;
+    for (const shortfall of [0, 1]) {
+      const root = await createTestTempDirectory("rea-report-cumulative-");
+      const periodic = Buffer.from('{"status":"running"}');
+      const final = Buffer.from('{"status":"complete"}');
+      await writeFile(join(root, "periodic.json"), periodic);
+      const budget = periodic.length + final.length - shortfall;
+      const evidence = await runCapture({
+        executable: process.execPath,
+        arguments: [
+          "-e",
+          "require('node:fs').writeFileSync('final.json','{\"status\":\"complete\"}')",
+        ],
+        working_directory: root,
+        filesystem_observation_paths: [root],
+        limits: { output_bytes: 1, file_bytes: budget },
+      });
+      const capture = parseProcessCapture(evidence.normalized_result);
+      expect(capture.truncation_details.filesystem_before).toMatchObject({
+        hashed_bytes: periodic.length,
+        hash_omissions: [],
+      });
+      expect(capture.files_after).toContainEqual(
+        expect.objectContaining({
+          path: "root_0:final.json",
+          sha256: createHash("sha256").update(final).digest("hex"),
+        }),
+      );
+      expect(capture.truncation_details.filesystem_after).toMatchObject({
+        enumeration_truncated: false,
+        hashed_bytes: final.length + (shortfall === 0 ? periodic.length : 0),
+        hash_omissions:
+          shortfall === 0
+            ? []
+            : [
+                {
+                  path: "root_0:periodic.json",
+                  reason: "file_bytes_budget",
+                  remaining_budget_bytes: periodic.length - 1,
+                },
+              ],
+      });
+      expect(
+        capture.files_after.find(({ path }) => path === "root_0:periodic.json")
+          ?.sha256,
+      ).toBe(
+        shortfall === 0
+          ? createHash("sha256").update(periodic).digest("hex")
+          : null,
+      );
+    }
+  },
+  20_000,
+);
+
 itWithCaptureCapability.each(["cli", "mcp"] as const)(
   "reports unknown absence instead of deletion in truncated %s capture Evidence",
   async (adapter) => {
@@ -65,7 +191,13 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
     await writeFile(join(root, "z.txt"), "unchanged");
     const scenario = {
       executable: process.execPath,
-      arguments: ["-e", "require('node:fs').writeFileSync('a.txt','added')"],
+      // Delete the known file and overflow the remaining directory capacity.
+      // Incomplete enumeration still cannot prove its absence, regardless of
+      // which new entry the filesystem returns first.
+      arguments: [
+        "-e",
+        "const fs=require('node:fs');fs.unlinkSync('z.txt');fs.writeFileSync('a.txt','added');fs.writeFileSync('b.txt','added');",
+      ],
       working_directory: root,
       filesystem_observation_paths: [root],
       limits: { files: 2 },
@@ -75,7 +207,9 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
     );
     const capture = parseProcessCapture(evidence.normalized_result);
     expect(capture.truncated).toBe(true);
-    expect(await readFile(join(root, "z.txt"), "utf8")).toBe("unchanged");
+    await expect(readFile(join(root, "z.txt"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     expect(
       capture.filesystem_effects.find(({ path }) => path === "root_0:z.txt")
         ?.status,

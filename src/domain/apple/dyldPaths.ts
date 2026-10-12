@@ -3,6 +3,7 @@ import type {
   DylibTreeView,
   MachoSlice,
 } from "./dylibResolution.js";
+import { machoCpuSubtypeBase } from "./machoCpuIdentity.js";
 
 const MAX_SYMLINK_HOPS = 32;
 
@@ -25,6 +26,7 @@ export const resolveTreePath = async (
   let hops = 0;
   while (pending.length > 0) {
     const segment = pending.shift() ?? "";
+    if (segment === ".") continue;
     if (segment === "..") {
       if (resolved.length === 0) return { kind: "escapes" };
       resolved.pop();
@@ -50,8 +52,12 @@ export const resolveTreePath = async (
     : { kind: "not-file" };
 };
 
-const segmentsOf = (path: string): string[] =>
-  path.split("/").filter((segment) => segment !== "" && segment !== ".");
+const segmentsOf = (path: string): string[] => {
+  const segments = path.split("/").filter((segment) => segment !== "");
+  // a trailing slash requires a directory, just like a final dot component.
+  if (path.endsWith("/")) segments.push(".");
+  return segments;
+};
 
 export const directoryOf = (path: string): string => {
   const index = path.lastIndexOf("/");
@@ -100,10 +106,19 @@ const COMPATIBLE_ARCHITECTURES: Readonly<Record<string, readonly string[]>> = {
 
 export const compatibleSlice = (
   slices: readonly MachoSlice[],
-  process: string,
+  process: Pick<MachoSlice, "architecture" | "cpu_type" | "cpu_subtype">,
 ): MachoSlice | undefined => {
-  for (const architecture of COMPATIBLE_ARCHITECTURES[process] ?? [process]) {
-    const slice = slices.find((item) => item.architecture === architecture);
+  for (const architecture of COMPATIBLE_ARCHITECTURES[process.architecture] ?? [
+    process.architecture,
+  ]) {
+    const slice = slices.find(
+      (item) =>
+        item.architecture === architecture &&
+        (process.architecture !== "arm64e" ||
+          (item.cpu_type === process.cpu_type &&
+            machoCpuSubtypeBase(item.cpu_subtype) ===
+              machoCpuSubtypeBase(process.cpu_subtype))),
+    );
     if (slice !== undefined) return slice;
   }
   return undefined;

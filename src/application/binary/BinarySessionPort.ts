@@ -1,6 +1,9 @@
 import type { InvestigationRecordPort } from "../investigation/InvestigationRecordPort.js";
 import type { ExecutableFormatHint } from "../../domain/dosCom.js";
-import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
+import type {
+  BinaryArchitecture,
+  BinaryTarget,
+} from "../../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
@@ -11,6 +14,7 @@ import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { WorkflowSnapshotRecordInput } from "./BinarySessionRecords.js";
 
 import type {
+  AnalysisExecution,
   AnalysisOperation,
   AnalysisOperationPort,
   ExecutionOptions,
@@ -32,6 +36,12 @@ export interface SavedAnalysisSnapshot {
 /** Target lifecycle used by CLI and MCP without exposing a concrete provider. */
 export interface BinarySessionPort
   extends AnalysisOperationPort, InvestigationRecordPort {
+  /** Execute only against a positively ready, already-created provider client. */
+  executeIfProviderReady(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    options?: Pick<ExecutionOptions, "signal" | "selectorOrigin">,
+  ): Promise<Result<AnalysisExecution, AnalysisError> | undefined>;
   /** Hold the active target binding through a complete composed operation. */
   withAdmittedAnalysis<Value>(
     operationName: string,
@@ -44,6 +54,8 @@ export interface BinarySessionPort
       readonly signal?: AbortSignal;
       readonly targetKind?: BinaryTarget["kind"];
       readonly formatHint?: ExecutableFormatHint;
+      readonly architecture?: BinaryArchitecture;
+      readonly entryPoint?: string;
       readonly snapshot?: AnalysisSnapshot;
       readonly providerId?: AnalysisProviderSelector;
     },

@@ -513,7 +513,84 @@ describe("JavaScript Application Graph: source maps and observations", () => {
       ),
     ).toThrow(/Source-map observation/u);
   });
+});
 
+describe("JavaScript Application Graph: source-map digest consistency", () => {
+  it("rejects source-map observations that contradict a known original digest", () => {
+    const sourceMapNode = (
+      identityDigest: string | null,
+      observedDigest: unknown,
+      contentAvailable?: boolean,
+    ) =>
+      createJavaScriptApplicationNode({
+        kind: "source-module",
+        identity: {
+          strategy: "source-map-original",
+          source_root: null,
+          stability: "source-map-exact",
+          source_map_sha256: APPLICATION_GRAPH_DIGESTS.asar,
+          original_source: "src/editor.ts",
+          source_sha256: identityDigest,
+        },
+        observations: [
+          {
+            label: null,
+            source_map_reference: resolveJavaScriptSourceMapReference(
+              "src/editor.ts",
+              null,
+              "dist/app.js.map",
+            ),
+            properties: {
+              ...(contentAvailable === undefined
+                ? {}
+                : { content_available: contentAvailable }),
+              ...(observedDigest === undefined
+                ? {}
+                : { content_sha256: observedDigest }),
+            },
+            evidence: artifactEvidence(
+              APPLICATION_GRAPH_DIGESTS.asar,
+              "dist/app.js.map",
+              "ast-static-analysis",
+            ),
+          },
+        ],
+      });
+
+    expect(() =>
+      graphForNode(sourceMapNode("2".repeat(64), "3".repeat(64))),
+    ).toThrow(/Source-map observation/u);
+    expect(() => graphForNode(sourceMapNode(null, "3".repeat(64)))).toThrow(
+      /Source-map observation/u,
+    );
+    expect(() => graphForNode(sourceMapNode(null, 7))).toThrow(
+      /Source-map observation/u,
+    );
+    expect(() =>
+      graphForNode(sourceMapNode("3".repeat(64), "3".repeat(64))),
+    ).not.toThrow();
+    expect(() =>
+      graphForNode(sourceMapNode("3".repeat(64), "3".repeat(64), false)),
+    ).toThrow(/Source-map observation/u);
+    expect(() =>
+      graphForNode(sourceMapNode("3".repeat(64), null, false)),
+    ).toThrow(/Source-map observation/u);
+    expect(() =>
+      graphForNode(sourceMapNode("3".repeat(64), null, true)),
+    ).toThrow(/Source-map observation/u);
+    expect(() =>
+      graphForNode(sourceMapNode("3".repeat(64), undefined)),
+    ).toThrow(/Source-map observation/u);
+    expect(() => graphForNode(sourceMapNode(null, null, true))).toThrow(
+      /Source-map observation/u,
+    );
+    expect(() =>
+      graphForNode(sourceMapNode("3".repeat(64), "3".repeat(64), undefined)),
+    ).not.toThrow();
+  });
+});
+
+describe("JavaScript Application Graph: commitments and schemas", () => {
   it("rejects unknown fields and stale commitments", () => {
     const graph = buildSyntheticJavaScriptApplicationGraph();
     expect(() =>
@@ -544,6 +621,21 @@ describe("JavaScript Application Graph: source maps and observations", () => {
     const staleEdge = structuredClone(graph);
     firstOf(staleEdge.edges, "edge").edge_id = `jag_edge_${"f".repeat(64)}`;
     expect(() => parseJavaScriptApplicationGraph(staleEdge)).toThrow(
+      /Edge identifier/u,
+    );
+  });
+
+  it("creates exactly the graph the public schema accepts", () => {
+    const graph = buildSyntheticJavaScriptApplicationGraph();
+    expect(JSON.stringify(graph)).toBe(
+      JSON.stringify(
+        javascriptApplicationGraphSchema.parse(structuredClone(graph)),
+      ),
+    );
+
+    const { graph_id: _graphId, ...semantic } = structuredClone(graph);
+    firstOf(semantic.edges, "edge").edge_id = `jag_edge_${"f".repeat(64)}`;
+    expect(() => createJavaScriptApplicationGraph(semantic)).toThrow(
       /Edge identifier/u,
     );
   });

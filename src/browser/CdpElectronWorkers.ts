@@ -12,6 +12,7 @@ import {
 import type { CdpEndpointTarget } from "./CdpEndpoint.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import { authorizedElectronFile } from "./ElectronFileScope.js";
+import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 /** Inventory local worker targets without attaching to them. */
 export const captureElectronWorkers = async (input: {
@@ -60,17 +61,21 @@ export const captureElectronWorkers = async (input: {
       input.completeness.exclude("workers", "invalid_protocol_value");
       continue;
     }
+    if (typeof target.attached !== "boolean") {
+      input.completeness.exclude("workers", "invalid_protocol_value");
+      continue;
+    }
     workers.push({
       target_id: targetId,
       type,
       file_path: path,
-      attached: target.attached === true,
+      attached: target.attached,
       opener_target_id: openerTargetId,
       parent_frame_id: parentFrameId,
     });
   }
   return workers.sort((left, right) =>
-    left.target_id.localeCompare(right.target_id),
+    compareUnicodeCodePoints(left.target_id, right.target_id),
   );
 };
 

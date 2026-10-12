@@ -1,4 +1,11 @@
-import { access, chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, onTestFinished } from "vitest";
@@ -20,6 +27,7 @@ const fixture = fileURLToPath(new URL("./jadx-mcp.mjs", import.meta.url));
 export const createJadxProtocolFixture = async (
   mode = "normal",
   cleanupFailure?: () => boolean,
+  inventory?: { readonly classCount?: number },
 ) => {
   const root = await createTestTempDirectory("rea-android-boundary-");
   const apk = join(root, "fixture.apk");
@@ -27,10 +35,11 @@ export const createJadxProtocolFixture = async (
   const javaHome = join(root, "jdk");
   const javaBin = join(javaHome, "bin");
   const java = join(javaBin, "java");
+  const javaProbeLog = join(root, "java-probes.log");
   await mkdir(javaBin, { recursive: true });
   await writeFile(
     java,
-    `#!/usr/bin/env node\nif (process.argv[2] === "--list-modules") console.log("java.base@21.0.0\\njdk.compiler@21.0.0");\n`,
+    `#!/usr/bin/env node\nif (process.argv[2] === "--list-modules") { require("node:fs").appendFileSync(${JSON.stringify(javaProbeLog)}, "probe\\n"); console.log("java.base@21.0.0\\njdk.compiler@21.0.0"); }\n`,
   );
   await chmod(java, 0o755);
   await writeOrderedZip(apk, ["AndroidManifest.xml", "classes.dex"]);
@@ -56,7 +65,15 @@ export const createJadxProtocolFixture = async (
         command: process.execPath,
         arguments: [fixture],
         expectedCommand: process.execPath,
-        env: { ...options.env, REA_FAKE_JADX_MODE: mode },
+        env: {
+          ...options.env,
+          REA_FAKE_JADX_MODE: mode,
+          ...(inventory?.classCount === undefined
+            ? {}
+            : {
+                REA_FAKE_JADX_CLASS_COUNT: String(inventory.classCount),
+              }),
+        },
       });
       launches.push({
         runId: options.runId,
@@ -74,7 +91,22 @@ export const createJadxProtocolFixture = async (
             ownsProcessLifetime: true,
             cleanup: () => cleanupOwnedProcessGroup(spawned.ownership),
           });
-          expect((await supervisor.stop()).status).not.toBe("incomplete");
+          // The SDK can close the child transport before process exit settles.
+          // Retry retained ownership without bypassing the supervisor's proof.
+          // Retain the entire stop result so an incomplete teardown failure reports its reason.
+          await expect
+            .poll(
+              async () => {
+                const stopped = await supervisor.stop();
+                if (stopped.status === "incomplete")
+                  throw new Error(
+                    `Owned process cleanup incomplete: ${stopped.reason}`,
+                  );
+                return stopped.status;
+              },
+              { timeout: 5_000 },
+            )
+            .not.toBe("incomplete");
           if (options.cwd !== undefined)
             await rm(options.cwd, { recursive: true, force: true });
         });
@@ -111,6 +143,10 @@ export const createJadxProtocolFixture = async (
     jar,
     environment,
     launches,
+    javaProbeCount: async () => {
+      const contents = await readFile(javaProbeLog, "utf8");
+      return contents.split("\n").filter(Boolean).length;
+    },
   };
 };
 

@@ -10,20 +10,20 @@ import { readRecoveryFile, recoveryFailureMessage } from "./RecoveryFiles.js";
 import { RECOVERY_LIMITS } from "./WakaruRelease.js";
 import type { runWakaruCommand } from "./WakaruCommand.js";
 
-const warningSchema = z.strictObject({
+const warningSchema = z.looseObject({
   filename: z.string(),
   kind: z.string(),
   is_error: z.boolean(),
   message: z.string(),
 });
-const reportSchema = z.strictObject({
+const reportSchema = z.looseObject({
   detected_formats: z.array(z.string()),
   safety: z.string(),
   modules: z.array(
-    z.strictObject({
+    z.looseObject({
       filename: z.string().min(1),
       kind: z.literal("javascript"),
-      status: z.literal("decompiled"),
+      status: z.string().min(1),
     }),
   ),
   warnings: z.array(warningSchema),
@@ -35,12 +35,12 @@ const rangeSchema = z.tuple([
   z.number().int().nonnegative(),
   z.number().int().nonnegative(),
 ]);
-const provenanceSchema = z.strictObject({
+const provenanceSchema = z.looseObject({
   format: z.string(),
   strategy: z.string(),
   modules: z.record(
     z.string(),
-    z.strictObject({
+    z.looseObject({
       input: z.string(),
       ranges: z.array(rangeSchema),
       extraction: z.string(),
@@ -54,12 +54,16 @@ const OPERATION = "recover_javascript_sources";
 type ReportContext = {
   execution: Awaited<ReturnType<typeof runWakaruCommand>>;
   provenancePath: string;
-  snapshotPath: string;
-  sourceBytes: Buffer;
+  snapshots: ReadonlyMap<string, Buffer>;
   files: readonly { relativePath: string }[];
 };
 
-/** Parse exact pinned producer JSON before projecting provider-neutral artifacts. */
+/**
+ * Parse producer JSON before projecting provider-neutral artifacts. Wakaru adds
+ * fields and category values within a major version, so unknown keys are kept
+ * and `status` stays the reported string; identity, path, range and file-set
+ * checks below remain exact.
+ */
 export const parseWakaruReports = async (context: ReportContext) => {
   const { execution, provenancePath } = context;
 
@@ -116,7 +120,7 @@ const validateModuleSet = (
   provenance: z.output<typeof provenanceSchema>,
   context: ReportContext,
 ): void => {
-  const { files, snapshotPath, sourceBytes } = context;
+  const { files, snapshots } = context;
   const registry = new ArtifactPathRegistry();
   const expected = new Set(["provenance.json"]);
   const observed = new Set(files.map((file) => file.relativePath));
@@ -130,7 +134,9 @@ const validateModuleSet = (
     expected.add(path);
     if (observed.has(`${path}.map`)) expected.add(`${path}.map`);
     const entry = provenance.modules[path];
-    if (entry === undefined || entry.input !== snapshotPath)
+    const sourceBytes =
+      entry === undefined ? undefined : snapshots.get(entry.input);
+    if (entry === undefined || sourceBytes === undefined)
       throw new TypeError(
         `Module provenance does not bind the selected input snapshot: ${path}`,
       );

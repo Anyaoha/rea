@@ -13,7 +13,13 @@ import {
 import { digestSchema } from "../digests.js";
 import { prefixedDigestSchema } from "../digests.js";
 import { integrityContradictionSchema } from "../artifactGraph.js";
+import { artifactIntegrityPolicySchema } from "../artifactIntegrityPolicy.js";
 import { localPathStringSchema } from "../localPath.js";
+import { javaScriptAnalysisResourceControlsSchema } from "./javascriptAnalysisResourceControls.js";
+import {
+  javaScriptSourcePathsSchema,
+  javaScriptSourceSelectionSchema,
+} from "./javascriptSourceSelection.js";
 
 const countSchema = z.number().int().min(0);
 
@@ -21,7 +27,9 @@ const countSchema = z.number().int().min(0);
 export const analyzeJavaScriptApplicationInputSchema = z.strictObject({
   input_path: localPathStringSchema,
   format: z.enum(["auto", "asar", "directory"]).default("auto"),
-  integrity_policy: z.enum(["fail", "record-and-continue"]).default("fail"),
+  integrity_policy: artifactIntegrityPolicySchema,
+  source_paths: javaScriptSourcePathsSchema.optional(),
+  ...javaScriptAnalysisResourceControlsSchema.shape,
 });
 
 /** Compact counts for the high-level Electron architecture/security surface. */
@@ -68,6 +76,7 @@ const applicationAnalysisResultShape = z.strictObject({
   inventory_manifest_id: prefixedDigestSchema("agm"),
   inventory_graph_sha256: digestSchema,
   integrity_contradictions: z.array(integrityContradictionSchema),
+  source_selection: javaScriptSourceSelectionSchema.exactOptional(),
   graph: javascriptApplicationGraphSchema,
   summary: electronBoundarySummarySchema,
   statistics: reconstructionStatisticsSchema,

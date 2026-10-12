@@ -4,6 +4,7 @@ import { createTestBinarySession } from "../../tests/fixtures/binarySession.js";
 import { parseConfig } from "../config/parseConfig.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { functionDossierSchema } from "../domain/hopperValues.js";
+import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
 import { err, ok } from "../domain/result.js";
 import { silentLogger } from "../logger.js";
@@ -104,8 +105,13 @@ const fixture = (version = "12.1.4") => {
               persists_after_close: false,
             },
           });
+        const value =
+          operation === "procedure_pseudo_code" ? dossier.pseudocode : dossier;
         return ok(
-          operation === "procedure_pseudo_code" ? dossier.pseudocode : dossier,
+          operation === "procedure_pseudo_code" ||
+            operation === "analyze_function"
+            ? { value, limitations: [] }
+            : value,
         );
       },
       close: async () => ok(null),
@@ -125,6 +131,41 @@ const open = async (session: ReturnType<typeof fixture>["session"]) => {
 };
 
 describe("Ghidra snapshot cache", () => {
+  it("refuses snapshots whose profile predates typed incoming references", async () => {
+    const initial = fixture();
+    await open(initial.session);
+    const snapshot = initial.session.exportAnalysisSnapshot();
+    if (!snapshot.ok) throw snapshot.error;
+    await initial.session.close();
+    const profile = snapshot.value.binding.analysis_profile;
+    expect(profile.parameters.instruction_references).toBe(
+      "exact-address-incoming-v1",
+    );
+    const legacy = {
+      ...snapshot.value,
+      binding: {
+        ...snapshot.value.binding,
+        analysis_profile: createAnalysisProfile(
+          profile.provider,
+          Object.fromEntries(
+            Object.entries(profile.parameters).filter(
+              ([key]) => key !== "instruction_references",
+            ),
+          ),
+        ),
+      },
+    };
+    const replay = fixture();
+    const imported = replay.session.importAnalysisSnapshot(legacy);
+    if (!imported.ok) throw imported.error;
+    expect(await replay.session.previewTarget(TARGET)).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceIntegrityError" },
+    });
+    expect(replay.calls).toEqual([]);
+    await replay.session.close();
+  });
+
   it.each([
     { operation: "analyze_function", parameters: { procedure: "0x1000" } },
     {

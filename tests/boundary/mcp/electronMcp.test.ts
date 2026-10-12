@@ -1,11 +1,11 @@
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -13,7 +13,7 @@ import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { ElectronActiveObservationPort } from "../../../src/application/javascript/ElectronActiveObservationPort.js";
-import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
+import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
@@ -24,10 +24,63 @@ import {
 import { writeElectronBoundaryFixture } from "../../fixtures/electronBoundaryApplication.js";
 import { createElectronActiveObservationFixtureResult } from "../../../src/domain/javascript/electronActiveObservation.fixture.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 
 const browsers: FakeCdpBrowser[] = [];
 const resources: Array<{ close(): Promise<unknown> }> = [];
 const temporary: string[] = [];
+
+it("retains failed JavaScript inventory cleanup through server shutdown retries", async () => {
+  const { archive } = await createStrippedAsarAddon();
+  const session = createTestBinarySession(() => ({
+    execute: () => Promise.resolve(observed(null)),
+    close: () => Promise.resolve(resultOk(null)),
+  }));
+  const server = createServer({ kind: "session", session });
+  const client = new Client({ name: "javascript-cleanup-owner", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const originalClose = AsarArtifactReader.prototype.close;
+  const owners = new Set<AsarArtifactReader>();
+  let blocked = true;
+  const close = vi
+    .spyOn(AsarArtifactReader.prototype, "close")
+    .mockImplementation(function (this: AsarArtifactReader) {
+      owners.add(this);
+      if (blocked) return Promise.reject(new Error("snapshot cleanup blocked"));
+      return originalClose.call(this);
+    });
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const response = await client.callTool({
+      name: "analyze_javascript_application",
+      arguments: {
+        input_path: archive,
+        integrity_policy: "record-and-continue",
+      },
+    });
+    expect(parseMcpToolError(response)).toMatchObject({
+      error: {
+        code: "cleanup_incomplete",
+        details: {
+          resources: [expect.stringContaining(archive)],
+          partial_observation: { kind: "artifact-inventory" },
+        },
+      },
+    });
+    expect(owners.size).toBe(1);
+    await expect(server.close()).rejects.toThrow();
+    blocked = false;
+    await server.close();
+    expect(owners.size).toBe(1);
+    expect(close.mock.calls.length).toBeGreaterThanOrEqual(3);
+  } finally {
+    blocked = false;
+    await Promise.all([client.close(), server.close(), session.close()]);
+    close.mockRestore();
+  }
+});
 
 afterEach(async () => {
   await Promise.all(resources.splice(0).map(async (item) => item.close()));
@@ -195,12 +248,12 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
   expect(inspected.isError).not.toBe(true);
   expect(inspected.structuredContent).toMatchObject({
     normalized_result: {
-      target: { file_path: expect.stringMatching(/\/index\.html$/u) },
+      target: { file_path: expect.stringMatching(/[\\/]index\.html$/u) },
       scripts: {
         items: [
           expect.objectContaining({
             frame_id: "frame-main",
-            file_path: expect.stringMatching(/\/app\.js$/u),
+            file_path: expect.stringMatching(/[\\/]app\.js$/u),
             cdp_hash: null,
             length: null,
             is_module: null,
@@ -211,7 +264,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
         expect.objectContaining({
           target_id: "electron-worker",
           opener_target_id: "electron-page",
-          file_path: expect.stringMatching(/\/worker\.js$/u),
+          file_path: expect.stringMatching(/[\\/]worker\.js$/u),
         }),
       ],
     },
@@ -223,8 +276,13 @@ it("runs active Electron scenarios with selected paths and inferred working dire
   temporary.push(root);
   const applicationPath = join(root, "main.js");
   await writeFile(applicationPath, "module.exports = {};\n");
-  const aliasedRoot = join(root, "..", `${root.split("/").at(-1)}-alias`);
-  await symlink(root, aliasedRoot, "dir");
+  const aliasedRoot = join(root, "..", `${basename(root)}-alias`);
+  // A junction needs no symlink privilege on Windows.
+  await symlink(
+    root,
+    aliasedRoot,
+    process.platform === "win32" ? "junction" : "dir",
+  );
   temporary.push(aliasedRoot);
   const workingDirectory = await createTestTempDirectory(
     "rea-electron-working-directory-",
@@ -362,8 +420,11 @@ it("exposes the target-free static JavaScript application workflow", async () =>
   );
 
   expect(analyzed.isError).not.toBe(true);
-  expect(progress[0]).toBe(0);
-  expect(progress.at(-1)).toBe(1);
+  expect(progress[0]).toBe(1);
+  expect(progress.at(-1)).toBeGreaterThan(1);
+  progress.forEach((value, index) => {
+    expect(value).toBeGreaterThan(progress[index - 1] ?? 0);
+  });
   const projected = z
     .object({
       evidence_id: z.string(),

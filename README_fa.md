@@ -1,6 +1,6 @@
 <div align="center" dir="rtl">
 
-[English](README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · **فارسی**
+[English](README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · **فارسی** · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
 
 # REA: مهندسی معکوس هر چیزی
 
@@ -9,7 +9,6 @@
 **قابلیتی دیده‌اید که دوستش دارید؟ سازوکارش را تا سطح باینری درک کنید.**
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](docs/mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
@@ -18,7 +17,7 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55" /></a>
 
-**[وب‌سایت](https://rea.tools/) · [راهنماها](https://rea.tools/guides/) · [نمونه‌های عملی](https://rea.tools/showcase/)**
+**[وب‌سایت](https://rea.tools/fa/) · [راهنماها](https://rea.tools/fa/guides/) · [نمونه‌های عملی](https://rea.tools/fa/showcase/)**
 
 [شروع سریع](#شروع-سریع) · [REA چگونه کار می‌کند؟](#rea-چگونه-کار-میکند) · [چه چیزهایی را میتوان تحلیل کرد؟](#چه-چیزهایی-را-میتوان-تحلیل-کرد) · [نمونه‌های عملی](#نمونههای-عملی) · [پرسش‌های متداول](#پرسشهای-متداول) · [مستندات](#مستندات)
 
@@ -46,7 +45,7 @@ REA ایجنت شما را به ابزارهایی برای بررسی باین�
 
 فرایند راه‌اندازی، REA را در ایجنت شما ثبت می‌کند و دستورالعمل‌های گردش‌کار متناظر را نصب می‌کند. تحلیل بومی می‌تواند از نصب موجود Hopper یا Ghidra استفاده کند؛ همچنین راه‌اندازی می‌تواند با تأیید شما Hopper را به‌صورت اختیاری نصب کند. تحلیل ایستای JavaScript به هیچ‌یک از این موتورهای تحلیل نیاز ندارد.
 
-> برای دستورالعمل‌های راه‌اندازی، راهنماهای تصویری و مطالعات موردی واقعی، **[به وب‌سایت REA مراجعه کنید](https://rea.tools/)**.
+> برای دستورالعمل‌های راه‌اندازی، راهنماهای تصویری و مطالعات موردی واقعی، **[به وب‌سایت REA مراجعه کنید](https://rea.tools/fa/)**.
 
 ## شروع سریع
 
@@ -123,20 +122,26 @@ npx rea-agents@latest setup
 
 REA به Node.js 22.x (>=22.19)، 24.x (>=24.11) یا 26+، به‌همراه npm نیاز دارد. ابزارهای اضافی و پشتیبانی سیستم میزبان به نوع هدف بستگی دارند:
 
-| هدف                   | خروجی REA                                                                           | پیش‌نیازها و راهنما                                                                                                              |
-| --------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| باینری‌های بومی        | شبه‌کد، اسمبلی، رشته‌ها، نمادها، فراخوانی‌ها و ارجاعات                                 | Hopper، Ghidra یا IDA؛ [تحلیل بومی](https://rea.tools/guides/native/)                                                           |
-| ساختار ELF آفلاین      | بخش‌ها، سگمنت‌ها، نمادها و relocationهای اصلی و گزینه‌های احتمالی کاهش آسیب‌پذیری ایستا | pwntools تأمین‌شده توسط فراخواننده روی Linux x64؛ [تشخیص باینری](docs/binary-diagnostics.md)                                     |
-| بایت‌کد EVM            | selectorهای dispatch، offsetهای بایتی، آرگومان‌های استنباط‌شده و قابلیت تغییر وضعیت   | دادهٔ خام/hex محلی؛ [راهنمای EVM آفلاین](docs/evm-bytecode.md)                                                                    |
-| کرش‌های ثبت‌شدهٔ لینوکس  | یادداشت‌های خام، رجیسترها/سیگنال‌های تمام threadهای ثبت‌شده و گزینه‌های احتمالی نگاشت   | pwntools تأمین‌شده توسط فراخواننده؛ GDB/pwndbg اختیاری؛ [کرش‌های ثبت‌شده](docs/recorded-crashes.md)                                |
-| JavaScript / Electron | ماژول‌ها، importها، source mapها، مسیرها، IPC و ارتباط افزونه‌های بومی                | Node.js و npm؛ [تحلیل برنامه](https://rea.tools/guides/javascript/)                                                             |
-| وب‌سایت‌ها              | ساختار صفحه، اسکریپت‌ها، مشاهدات شبکه و اسکرین‌شات‌های درخواستی                        | مرورگر مبتنی بر Chrome؛ [تحلیل مرورگر](https://rea.tools/guides/browser/)                                                       |
-| داده‌های ضبط‌شدهٔ شبکه   | درخواست‌ها، پاسخ‌ها، payloadهای آشکارشده و مکان آن‌ها در منبع                          | HAR؛ ابزار mitmdump در لینوکس برای ضبط‌های بومی mitmproxy؛ [راهنمای ضبط شبکه](docs/web-network-captures.md)                      |
-| اسمبلی‌های .NET        | فراداده، دستورالعمل‌های CIL، وابستگی‌های بومی اعلام‌شده و مقایسهٔ buildها                | بررسی ایستا؛ [راهنمای کد مدیریت‌شده](docs/managed-code-analysis.md)                                                              |
-| فایل‌های APK اندروید   | تعاریف Manifest، کلاس‌ها، متدهای دیکامپایل‌شده و ارجاعات                               | JADX بدون رابط گرافیکی و JDK کامل در Linux/macOS؛ [راهنمای اندروید](docs/android-analysis.md)                                   |
-| Firmware              | ناحیه‌ها، نتایج استخراج و تحویل به ابزارهای تحلیل بومی                               | Binwalk / Unblob در لینوکس؛ [راهنمای Firmware](docs/firmware-analysis.md)                                                       |
-| بسته‌ها و منابع        | فهرست فایل‌ها، digestها، فایل‌های plist، ساختار bundle اپل و منابع استخراج‌شده         | [راهنمای آرتیفکت و JavaScript](docs/javascript-artifact-reconstruction.md)، [برنامه‌های اپل](docs/apple-application-analysis.md) |
-| رفتار فرایند          | خروجی ترمینال، تعاملات، وضعیت خروج، مشاهدات سیستم فایل و مقایسهٔ اجراها               | Linux/macOS با PTY بومی؛ [ضبط فرایند](docs/process-capture.md)                                                                  |
+| هدف                    | خروجی REA                                                                           | پیش‌نیازها و راهنما                                                                                                                  |
+| ---------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| باینری‌های بومی         | شبه‌کد، اسمبلی، رشته‌ها، نمادها، فراخوانی‌ها و ارجاعات                                 | Hopper، Ghidra یا IDA؛ [تحلیل بومی](https://rea.tools/fa/guides/native/)                                                            |
+| ساختار ELF آفلاین       | بخش‌ها، سگمنت‌ها، نمادها و relocationهای اصلی و گزینه‌های احتمالی کاهش آسیب‌پذیری ایستا | pwntools تأمین‌شده توسط فراخواننده روی Linux x64؛ [تشخیص باینری](docs/binary-diagnostics.md)                                         |
+| بایت‌کد EVM             | selectorهای dispatch، offsetهای بایتی، آرگومان‌های استنباط‌شده و قابلیت تغییر وضعیت   | دادهٔ خام/hex محلی روی Linux x64؛ [راهنمای EVM آفلاین](docs/evm-bytecode.md)                                                          |
+| کرش‌های ثبت‌شدهٔ لینوکس   | یادداشت‌های خام، رجیسترها/سیگنال‌های تمام threadهای ثبت‌شده و گزینه‌های احتمالی نگاشت   | pwntools تأمین‌شده توسط فراخواننده روی Linux x64؛ GDB/pwndbg اختیاری؛ [کرش‌های ثبت‌شده](docs/recorded-crashes.md)                      |
+| JavaScript / Electron  | ماژول‌ها، importها، source mapها، مسیرها، IPC و ارتباط افزونه‌های بومی                | Node.js و npm؛ [تحلیل برنامه](https://rea.tools/fa/guides/javascript/)                                                              |
+| وب‌سایت‌ها               | ساختار صفحه، اسکریپت‌ها، مشاهدات شبکه و اسکرین‌شات‌های درخواستی                        | مرورگر مبتنی بر Chrome؛ [تحلیل مرورگر](https://rea.tools/fa/guides/browser/)                                                        |
+| داده‌های ضبط‌شدهٔ شبکه    | درخواست‌ها، پاسخ‌ها، payloadهای آشکارشده و مکان آن‌ها در منبع                          | HAR؛ ابزار mitmdump در لینوکس برای ضبط‌های بومی mitmproxy؛ [راهنمای ضبط شبکه](docs/web-network-captures.md)                          |
+| اسمبلی‌های .NET         | فراداده، دستورالعمل‌های CIL، وابستگی‌های بومی اعلام‌شده و مقایسهٔ buildها                | بررسی ایستا؛ [راهنمای کد مدیریت‌شده](docs/managed-code-analysis.md)                                                                  |
+| فایل‌های APK اندروید    | تعاریف Manifest، کلاس‌ها، متدهای دیکامپایل‌شده و ارجاعات                               | JADX بدون رابط گرافیکی و JDK کامل در Linux/macOS/Windows x64؛ [راهنمای اندروید](docs/android-analysis.md)                           |
+| دستگاه‌های اندروید      | دستگاه‌ها، بسته‌ها، فرایندها، لاگ‌ها، دامپ‌ها، اسکرین‌شات‌ها و انتقال APK/فایل             | adb تأمین‌شده توسط فراخوان‌کننده (شبیه‌ساز یا دستگاه)؛ [راهنمای ADB](docs/adb-device-analysis.md)                                      |
+| پروژه‌های JEB           | واحدهای پروژه از موتور، هش‌های مصنوع و شبه‌کدِ نوع/متد                                 | یک کلاینت JEB که توسط فراخوان‌کننده اجرا شده و MCP ارائه می‌دهد و با REA_JEB_MCP_URL انتخاب می‌شود؛ [راهنمای JEB](docs/jeb-analysis.md) |
+| منابع اندروید          | مانیفست رمزگشایی‌شده، جداول رشته‌ها، زبان‌ها و اطلاعات نسخه                             | راه‌انداز Apktool تأمین‌شده توسط فراخوان‌کننده؛ [راهنمای منابع](docs/apktool-resource-analysis.md)                                     |
+| برنامه‌های فلاتر         | هش اسنپ‌شات دارت، هش کتابخانه‌ها به تفکیک ABI و اصالت بیلد موتور                      | هیچ (تحلیل ایستا APK)؛ [راهنمای فلاتر](docs/flutter-analysis.md)                                                                     |
+| Firmware               | ناحیه‌ها، نتایج استخراج و تحویل به ابزارهای تحلیل بومی                               | Binwalk / Unblob در لینوکس؛ [راهنمای Firmware](docs/firmware-analysis.md)                                                           |
+| بسته‌های ضبط‌شده         | فیلدهای منتخب، مقادیر تکراری، فیلترها و قواعد رمزگشایی                              | Linux: TShark 4.x + prlimit; [راهنمای ضبط بسته](docs/packet-captures.md)                                                            |
+| سیگنال‌های منطقی ضبط‌شده | توضیحات رمزگشا، بازه‌های نمونه و اطلاعات عیب‌یابی                                      | Linux: sigrok-cli 0.7.2 + prlimit; [راهنمای سیگنال‌ها](docs/signal-recordings.md)                                                    |
+| بسته‌ها و منابع         | فهرست فایل‌ها، digestها، فایل‌های plist، ساختار bundle اپل و منابع استخراج‌شده         | [راهنمای آرتیفکت و JavaScript](docs/javascript-artifact-reconstruction.md)، [برنامه‌های اپل](docs/apple-application-analysis.md)     |
+| رفتار فرایند           | خروجی ترمینال، تعاملات، وضعیت خروج، مشاهدات سیستم فایل و مقایسهٔ اجراها               | Linux/macOS با PTY بومی؛ [ضبط فرایند](docs/process-capture.md)                                                                      |
 
 بررسی ایستای JavaScript و .NET فایل‌های ارائه‌شده را بدون اجرای برنامه می‌خواند. ضبط زمان اجرا، هدف انتخاب‌شده را با مجوزهای کاربری شما اجرا می‌کند یا با آن تعامل دارد؛ آثار این عملیات در راهنمای مربوط به هر نوع ضبط توضیح داده شده‌اند.
 
@@ -146,25 +151,25 @@ REA به Node.js 22.x (>=22.19)، 24.x (>=24.11) یا 26+، به‌همراه np
 
 ## نمونه‌های عملی
 
-[![تصویرهایی از نمونه‌های پنینگ صدای DX-Ball، پل کلیپ‌بورد Notion و حلقهٔ گلوله‌های TH04](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+[![تصویرهایی از نمونه‌های پنینگ صدای DX-Ball، پل کلیپ‌بورد Notion و حلقهٔ گلوله‌های TH04](docs/assets/rea-showcases.png)](https://rea.tools/fa/showcase/)
 
 ### DX-Ball: بازسازی محاسبهٔ موقعیت استریوی صدا
 
 یک فراخوانی صوتی را تا تابع کمکی تبدیل موقعیت به pan دنبال کنید، دستورالعمل‌ها را بررسی کنید و شبه‌کد ناقص را به C تبدیل کنید. بازسازی حاصل، هر ۳٬۲۰۵ مورد آزمایش x86 اصلی را با موفقیت پشت سر می‌گذارد و هر ۶۳ بایت تابع کامپایل‌شده را دقیقاً بازتولید می‌کند.
 
-[مطالعهٔ موردی](https://rea.tools/showcase/dx-ball/) · [مخزن بازسازی](https://github.com/N0zoM1z0/dx-ball)
+[مطالعهٔ موردی](https://rea.tools/fa/showcase/dx-ball/) · [مخزن بازسازی](https://github.com/N0zoM1z0/dx-ball)
 
 ### Notion: ردیابی پل کلیپ‌بورد Electron
 
 API کلیپ‌بورد در renderer را پیدا کنید، مسیر آن را از preload و IPC تا فرایند اصلی دنبال کنید و قالب غنی کلیپ‌بورد را بررسی کنید.
 
-[مطالعهٔ موردی](https://rea.tools/showcase/notion/)
+[مطالعهٔ موردی](https://rea.tools/fa/showcase/notion/)
 
 ### TH04: بازیابی محاسبهٔ حلقهٔ گلوله در DOS
 
 دستورالعمل‌های ۱۶بیتی بازی اصلی PC-98 را بررسی کنید، محاسبات زاویهٔ ثابت و هدف‌گیری‌شده را بازیابی کنید و کد C++ بازسازی‌شده را با خروجی کامپایلر تاریخی مقایسه کنید.
 
-[مطالعهٔ موردی](https://rea.tools/showcase/th04/) · [مخزن بازسازی](https://github.com/N0zoM1z0/th04)
+[مطالعهٔ موردی](https://rea.tools/fa/showcase/th04/) · [مخزن بازسازی](https://github.com/N0zoM1z0/th04)
 
 اگر از REA برای بررسی موضوع جالبی استفاده کرده‌اید، خوشحال می‌شویم آن را به اشتراک بگذارید. یک [issue](https://github.com/morluto/rea/issues) یا [pull request](https://github.com/morluto/rea/pulls) ثبت کنید و هدف، پرسش خود، نقش REA و یافته‌هایتان را توضیح دهید.
 
@@ -228,7 +233,7 @@ npx rea-agents@latest setup
 
 ## مستندات
 
-از [راهنماهای عملی وب‌سایت](https://rea.tools/guides/) شروع کنید. برای گزینه‌های دقیق، پیش‌نیازها و قراردادهای خروجی:
+از [راهنماهای عملی وب‌سایت](https://rea.tools/fa/guides/) شروع کنید. برای گزینه‌های دقیق، پیش‌نیازها و قراردادهای خروجی:
 
 - [نصب و راه‌اندازی](docs/installation.md): ثبت ایجنت، پیکربندی ارائه‌دهنده، به‌روزرسانی و حذف نصب.
 - [آمادگی و رفع اشکال](docs/installation.md#check-readiness-for-your-task): عیب‌یابی یک ایجنت یا موتور تحلیل.
@@ -241,7 +246,7 @@ npx rea-agents@latest setup
 
 ## تاریخچهٔ ستاره‌ها
 
-🎉 **۵۰٬۰۰۰ ستارهٔ GitHub — سپاسگزاریم!**
+🎉 **۱۱۰٬۰۰۰ ستارهٔ GitHub — سپاسگزاریم!**
 
 از همهٔ کسانی که از REA استفاده می‌کنند، خطاها را گزارش می‌دهند، قابلیت‌های جدید پیشنهاد می‌کنند، buildها را آزمایش می‌کنند و در بهبود پروژه مشارکت دارند سپاسگزاریم.
 
@@ -249,7 +254,13 @@ npx rea-agents@latest setup
 
 ## سلب مسئولیت
 
-REA ابزارهایی برای پژوهش، تحلیل و بازسازی قانونی در حوزهٔ مهندسی معکوس فراهم می‌کند. مسئولیت دریافت مجوزهای لازم و رعایت قوانین مربوط بر عهدهٔ شماست. این پروژه استفادهٔ غیرقانونی یا بدون مجوز را تأیید نمی‌کند.
+برای راهنمای استفادهٔ مسئولانه، [DISCLAIMER.md](DISCLAIMER.md) را ببینید.
+
+REA برای پژوهش، آموزش، تعامل‌پذیری، حفظ نرم‌افزار و تحلیل نرم‌افزارهایی است که مالک آن‌ها هستید یا اجازهٔ بررسی آن‌ها را دارید، در چارچوب قانون.
+
+The project's position on illegal or unauthorized use covers all REA
+versions, distribution channels, and platforms; each copy retains its
+applicable licenses.
 
 ## مشارکت
 
@@ -260,5 +271,17 @@ REA ابزارهایی برای پژوهش، تحلیل و بازسازی قان
 ## مجوز
 
 [MIT](LICENSE)
+
+REA-authored code is licensed under MIT. Third-party material retains its own
+licenses and copyright notices; see [Third-party notices](THIRD_PARTY_NOTICES.md)
+for the dependency inventory, preserved license texts, and external-tool terms.
+
+**You must legally obtain and be authorized to use commercial tools**, including
+IDA Pro / Hex-Rays decompilers, Hopper, and JEB, under their applicable licenses.
+REA grants no tool license, key, or activation entitlement. Trials and demos
+remain subject to vendor terms, including user, feature, automation, and output
+sharing restrictions. Cracked copies, stolen keys, unauthorized key sharing,
+and bypassing license restrictions are not authorized. This guidance does not
+amend MIT or third-party licenses.
 
 </div>

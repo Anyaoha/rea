@@ -1,4 +1,5 @@
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
+import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import { inferJsonShape } from "../domain/jsonShape.js";
 import { safeResponseMetadata } from "./CdpSafeMetadata.js";
 import {
@@ -47,6 +48,7 @@ export const handleExecutionContextCreated = (
   )
     return;
   const key = String(identifier);
+  // New contexts may reuse an id. Scripts already parsed keep the frame stored on them.
   state.executionContextFrames.set(key, frameId);
 };
 
@@ -80,6 +82,7 @@ export const handleScriptParsed = (
     state.completeness.exclude("scripts", exclusionReasonForUrl(rawUrl));
     return;
   }
+  const executionContext = executionContextKey(params.executionContextId);
   const baseScript = {
     scriptId,
     rawUrl,
@@ -87,7 +90,11 @@ export const handleScriptParsed = (
     origin: sanitized.origin,
     ...scriptMetadataValues(params),
     language: cdpStringValue(params.scriptLanguage) ?? null,
-    executionContextKey: executionContextKey(params.executionContextId),
+    executionContextKey: executionContext,
+    frameId:
+      executionContext === null
+        ? null
+        : (state.executionContextFrames.get(executionContext) ?? null),
   };
   const baseBytes = scriptMetadataStringBytes(baseScript);
   const sourceMapDeclared =
@@ -131,6 +138,7 @@ const scriptMetadataStringBytes = (script: {
   readonly hash: string | null;
   readonly language: string | null;
   readonly executionContextKey: string | null;
+  readonly frameId: string | null;
 }): number =>
   stringByteLength(script.scriptId) +
   stringByteLength(script.rawUrl) +
@@ -138,7 +146,8 @@ const scriptMetadataStringBytes = (script: {
   stringByteLength(script.origin) +
   stringByteLength(script.hash) +
   stringByteLength(script.language) +
-  stringByteLength(script.executionContextKey);
+  stringByteLength(script.executionContextKey) +
+  stringByteLength(script.frameId);
 
 const stringByteLength = (value: string | null): number =>
   value === null ? 0 : Buffer.byteLength(value, "utf8");
@@ -217,10 +226,17 @@ export const handleRequestWillBeSent = (
     preserveMalformedRedirectEvidence(state, requestId, previous)
   )
     return;
-  if (request === undefined) {
-    state.completeness.exclude("network_requests", "invalid_protocol_value");
-    state.network.delete(requestId);
-    state.networkRequestTimestamps.delete(requestId);
+  const method = cdpStringValue(request?.method);
+  const initiator = recordValue(params.initiator);
+  const initiatorType = cdpStringValue(initiator?.type);
+  if (
+    request === undefined ||
+    method === undefined ||
+    method.length === 0 ||
+    initiatorType === undefined ||
+    initiatorType.length === 0
+  ) {
+    preserveMalformedRedirectEvidence(state, requestId, previous);
     return;
   }
   const sanitized = allowedSanitizedUrl(request.url, state.allowedOrigins);
@@ -264,6 +280,12 @@ export const handleRequestWillBeSent = (
       state.networkRequestTimestamps.delete(requestId);
       return;
     } else {
+      const encodedDataLength = numberValue(redirectResponse.encodedDataLength);
+      if (encodedDataLength === undefined || encodedDataLength < 0)
+        state.completeness.exclude(
+          "network_requests",
+          "invalid_protocol_value",
+        );
       redirects.push({
         url: previous.url,
         response_url: responseUrl.url,
@@ -271,10 +293,10 @@ export const handleRequestWillBeSent = (
         resource_type: previous.resource_type,
         status: numberValue(redirectResponse.status) ?? null,
         mime_type: cdpStringValue(redirectResponse.mimeType) ?? null,
-        encoded_data_length: (() => {
-          const length = numberValue(redirectResponse.encodedDataLength);
-          return length === undefined ? null : Math.max(0, length);
-        })(),
+        encoded_data_length:
+          encodedDataLength === undefined || encodedDataLength < 0
+            ? null
+            : encodedDataLength,
         request_timestamp:
           state.networkRequestTimestamps.get(requestId) ?? null,
         // CDP reports redirectResponse on the next requestWillBeSent event.
@@ -283,7 +305,6 @@ export const handleRequestWillBeSent = (
       });
     }
   }
-  const initiator = recordValue(params.initiator);
   const initiatorFrame = initiatorLocation(initiator);
   const rawInitiatorUrl = cdpStringValue(initiatorFrame?.url);
   const initiatorUrl = allowedSanitizedUrl(
@@ -299,14 +320,14 @@ export const handleRequestWillBeSent = (
     request_id: requestId,
     url: sanitized.url,
     origin: sanitized.origin ?? "",
-    method: cdpStringValue(request.method) ?? "GET",
+    method,
     resource_type: cdpStringValue(params.type) ?? null,
     status: null,
     mime_type: null,
     encoded_data_length: null,
     redirects,
     initiator: {
-      type: cdpStringValue(initiator?.type) ?? "other",
+      type: initiatorType,
       url: initiatorUrl?.url ?? null,
       line: integerOrNull(initiatorFrame?.lineNumber),
       column: integerOrNull(initiatorFrame?.columnNumber),
@@ -402,12 +423,14 @@ export const handleLoadingFinished = (
   if (state.malformedRedirectRequestIds.has(requestId)) return;
   const current = state.network.get(requestId);
   if (current === undefined) return;
+  const encodedDataLength = numberValue(params.encodedDataLength);
+  if (encodedDataLength === undefined || encodedDataLength < 0) {
+    state.completeness.exclude("network_requests", "invalid_protocol_value");
+    return;
+  }
   state.network.set(requestId, {
     ...current,
-    encoded_data_length: Math.max(
-      0,
-      numberValue(params.encodedDataLength) ?? 0,
-    ),
+    encoded_data_length: encodedDataLength,
   });
 };
 
@@ -479,23 +502,20 @@ export const handleWebSocketFrame = (
   direction: "sent" | "received",
 ): void => {
   const requestId = cdpStringValue(params.requestId);
-  if (
-    requestId === undefined ||
-    (!state.network.has(requestId) && !state.allowedWebSockets.has(requestId))
-  )
-    return;
+  if (requestId === undefined) return;
+  const connection = state.webSocketConnectionsById.get(requestId);
+  if (connection === undefined) return;
   const response = recordValue(params.response);
   const payload = cdpStringValue(response?.payloadData) ?? "";
   const opcode = Math.max(0, Math.trunc(numberValue(response?.opcode) ?? 0));
   const decoded = opcode === 1 ? undefined : decodeBase64(payload);
   if (opcode !== 1 && decoded === undefined)
     state.completeness.exclude("websocket_frames", "invalid_protocol_value");
-  state.websockets.push({
-    request_id: requestId,
+  connection.events.push({
     direction,
     opcode,
     payload_bytes:
-      opcode === 1 ? Buffer.byteLength(payload) : (decoded?.byteLength ?? 0),
+      opcode === 1 ? Buffer.byteLength(payload) : (decoded?.byteLength ?? null),
     payload_shape: captureWebSocketShape(state, payload, opcode),
   });
 };
@@ -504,7 +524,7 @@ const captureWebSocketShape = (
   state: CdpCaptureEventsState,
   payload: string,
   opcode: number,
-): WebPageInspection["network"]["websocket_events"][number]["payload_shape"] => {
+): WebPageInspection["network"]["websocket_connections"][number]["events"][number]["payload_shape"] => {
   if (!state.input.include_websocket_shapes) return null;
   if (opcode !== 1) return { format: "binary", json_shape: null };
   const shape = inferJsonShape(payload);
@@ -534,9 +554,10 @@ export const handleWebSocketCreated = (
     );
     return;
   }
+  const sourceUrl = sanitizeBrowserUrl(rawUrl).url;
   let parsed: URL;
   try {
-    parsed = new URL(rawUrl);
+    parsed = new URL(sourceUrl);
   } catch (cause: unknown) {
     // Unparseable URLs are recorded as unsupported, not as failures.
     void cause;
@@ -553,7 +574,18 @@ export const handleWebSocketCreated = (
     state.completeness.exclude("websocket_connections", "disallowed_origin");
     return;
   }
-  state.allowedWebSockets.add(requestId);
+  if (state.webSocketConnectionsById.has(requestId)) {
+    state.completeness.exclude(
+      "websocket_connections",
+      "invalid_protocol_value",
+    );
+    return;
+  }
+  state.webSocketConnectionsById.set(requestId, {
+    request_id: requestId,
+    url: sourceUrl,
+    events: [],
+  });
 };
 
 export const handleFrameNavigated = (

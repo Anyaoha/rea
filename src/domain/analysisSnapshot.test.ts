@@ -8,6 +8,7 @@ import {
   snapshotBinding,
   snapshotEvidenceForQuery,
   snapshotTarget,
+  snapshotMatchesTarget,
 } from "./analysisSnapshot.js";
 import {
   ANALYSIS_SNAPSHOT_PROFILE,
@@ -16,6 +17,7 @@ import {
 } from "./analysisSnapshot.fixture.js";
 import { createEvidence } from "./evidence.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
+import type { BinaryTarget } from "./binaryTargetTypes.js";
 
 const snapshotWithHistoricalEvidence = () => {
   const target = snapshotTarget(ANALYSIS_SNAPSHOT_TARGET);
@@ -38,6 +40,7 @@ const snapshotWithHistoricalEvidence = () => {
       raw_result: null,
       provider: binding.provider,
       limitations: [],
+      relationship_coverage: null,
       locations: [],
       subject: {
         path: ANALYSIS_SNAPSHOT_TARGET.path,
@@ -67,50 +70,153 @@ const snapshotWithHistoricalEvidence = () => {
   };
 };
 
-describe("analysis snapshot contract", () => {
-  it("preserves DOS MZ target and subject formats with the x86 family", () => {
-    const target = {
-      path: ANALYSIS_SNAPSHOT_TARGET.path,
+describe("analysis snapshot target identity", () => {
+  it("partitions raw snapshots and query identities by the canonical entry", () => {
+    const target: BinaryTarget = {
+      path: "/fixture/image.bin",
       sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
-      kind: "executable" as const,
-      format: "dos-mz" as const,
-      architecture: "x86" as const,
-      availableArchitectures: ["x86" as const],
+      kind: "executable",
+      format: "raw-binary",
+      architecture: "arm",
+      availableArchitectures: ["arm"],
+      entryPoint: "0x8000000",
+      entryPointSource: "0x08000000",
     };
-    const evidence = createEvidence(target, ANALYSIS_SNAPSHOT_PROVIDER, {
+    const snapshot = snapshotTarget(target);
+    const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
+    const changed = {
+      ...target,
+      entryPoint: "0x9000000",
+      entryPointSource: "0x09000000",
+    };
+    expect(
+      snapshotMatchesTarget(snapshot, {
+        ...target,
+        entryPointSource: "0x8000000",
+      }),
+    ).toBe(true);
+    expect(snapshotMatchesTarget(snapshot, changed)).toBe(false);
+    expect(analysisQueryId(snapshot, binding, "list_procedures", {})).not.toBe(
+      analysisQueryId(snapshotTarget(changed), binding, "list_procedures", {}),
+    );
+    const parsed = analysisSnapshotSchema.parse({
+      target: snapshot,
+      binding,
+      entries: [],
+      workflow_entries: [],
+      evidence_bundle: createEvidenceBundle([]),
+    });
+    expect(parsed.target).toHaveProperty("entry_point", target.entryPoint);
+    const { entry_point: _entry, ...legacy } = {
+      ...snapshot,
+      entry_point: target.entryPoint,
+    };
+    expect(
+      analysisSnapshotSchema.safeParse({ ...parsed, target: legacy }).success,
+    ).toBe(false);
+    expect(snapshotTarget(ANALYSIS_SNAPSHOT_TARGET)).not.toHaveProperty(
+      "entry_point",
+    );
+  });
+});
+
+describe("analysis snapshot contract", () => {
+  it.each([
+    ["dos-mz", "x86"],
+    ["mach-o-universal", "arm64"],
+  ] as const)(
+    "preserves %s target and subject formats",
+    (format, architecture) => {
+      const target: BinaryTarget =
+        format === "mach-o-universal"
+          ? {
+              path: ANALYSIS_SNAPSHOT_TARGET.path,
+              sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+              kind: "executable",
+              format,
+              architecture,
+              availableArchitectures: [architecture],
+              universalSlice: { offset: 0, size: 32 },
+            }
+          : {
+              path: ANALYSIS_SNAPSHOT_TARGET.path,
+              sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+              kind: "executable",
+              format,
+              architecture,
+              availableArchitectures: [architecture],
+            };
+      const evidence = createEvidence(target, ANALYSIS_SNAPSHOT_PROVIDER, {
+        operation: "analyze_function",
+        parameters: {},
+        result: null,
+        analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      });
+      const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
+      const parsed = parseAnalysisSnapshot({
+        target: snapshotTarget(target),
+        binding,
+        entries: [
+          {
+            query_id: analysisQueryId(
+              snapshotTarget(target),
+              binding,
+              "analyze_function",
+              {},
+            ),
+            operation: "analyze_function",
+            parameters: {},
+            execution: {
+              result: null,
+              raw_result: null,
+              provider: binding.provider,
+              limitations: [],
+              locations: [],
+              subject: target,
+            },
+          },
+        ],
+        workflow_entries: [],
+        evidence_bundle: createEvidenceBundle([evidence]),
+      });
+      expect(parsed.target).toMatchObject({
+        format,
+        architecture,
+      });
+      expect(parsed.entries[0]?.execution.subject?.format).toBe(format);
+      expect(parsed.evidence_bundle.records[0]?.subject?.format).toBe(format);
+    },
+  );
+
+  it("rejects a snapshot subject path containing NUL", () => {
+    const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
+    const entry = {
+      query_id: `query_${"0".repeat(64)}`,
       operation: "analyze_function",
       parameters: {},
-      result: null,
-      analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
-    });
-    const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
-    const parsed = analysisSnapshotSchema.parse({
-      target: snapshotTarget(target),
-      binding,
-      entries: [
-        {
-          query_id: `query_${"0".repeat(64)}`,
-          operation: "analyze_function",
-          parameters: {},
-          execution: {
-            result: null,
-            raw_result: null,
-            provider: binding.provider,
-            limitations: [],
-            locations: [],
-            subject: target,
-          },
+      execution: {
+        result: null,
+        raw_result: null,
+        provider: binding.provider,
+        limitations: [],
+        locations: [],
+        subject: {
+          path: "a\u0000b",
+          sha256: "a".repeat(64),
+          format: "elf" as const,
+          architecture: null,
         },
-      ],
-      workflow_entries: [],
-      evidence_bundle: createEvidenceBundle([evidence]),
-    });
-    expect(parsed.target).toMatchObject({
-      format: "dos-mz",
-      architecture: "x86",
-    });
-    expect(parsed.entries[0]?.execution.subject?.format).toBe("dos-mz");
-    expect(parsed.evidence_bundle.records[0]?.subject?.format).toBe("dos-mz");
+      },
+    };
+    expect(
+      analysisSnapshotSchema.safeParse({
+        target: snapshotTarget(ANALYSIS_SNAPSHOT_TARGET),
+        binding,
+        entries: [entry],
+        workflow_entries: [],
+        evidence_bundle: createEvidenceBundle([]),
+      }).success,
+    ).toBe(false);
   });
 
   it("accepts snapshots with more than ten thousand analysis entries", () => {
@@ -311,7 +417,10 @@ describe("analysis snapshot Evidence binding", () => {
       workflow_entries: [],
       evidence_bundle: createEvidenceBundle([evidence]),
     };
-    expect(parseAnalysisSnapshot(snapshot)).toEqual(snapshot);
+    const parsedLegacySnapshot = parseAnalysisSnapshot(snapshot);
+    expect(
+      parsedLegacySnapshot.entries[0]?.execution.relationship_coverage,
+    ).toBeNull();
 
     expect(() =>
       parseAnalysisSnapshot({
@@ -338,6 +447,13 @@ describe("analysis snapshot Evidence binding", () => {
         const subject = altered.entries[0]?.execution.subject;
         if (subject !== null && subject !== undefined)
           subject.path = "/different/path";
+      },
+      (altered: typeof snapshot) => {
+        const entry = altered.entries[0];
+        if (entry === undefined) throw new TypeError("missing fixture entry");
+        Reflect.set(entry.execution, "relationship_coverage", {
+          status: "complete",
+        });
       },
     ];
     for (const alter of alterations) {

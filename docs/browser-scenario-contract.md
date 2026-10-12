@@ -156,6 +156,18 @@ Storage cookies are scoped to the page URL at each capture. Unsupported action
 tags, unknown fields, duplicate step IDs, and undeclared secret references fail
 validation.
 
+Cookies are installed before the initial navigation. Local storage entries are
+seeded once per browser storage partition; session storage entries are seeded
+once per origin in each top-level browsing context. Seeding occurs before the
+first document scripts for that area. An origin first reached by a later action
+receives its seed on that first visit. Application updates, deletions, and
+empty values then persist across later navigations in the same area; a new
+scenario starts with its own seeds. Partitioned frames can receive separate
+local storage seeds even when they share an origin. The pre-script mechanism
+uses CDP debugger instrumentation. The observer resumes only pauses whose top
+frame belongs to its private seed script; page breakpoints and `debugger`
+statements remain under the attached debugger client's control.
+
 The result is Evidence with an initial state followed by one record per
 declared action. Each step reports action status, elapsed time, sanitized URLs,
 event bounds, and independently typed capture states for screenshot, DOM,
@@ -250,8 +262,13 @@ Capturing more data alone does not establish a website change.
 states. Captured bodies retain base64 bytes, byte count, media type, and SHA-256
 of the retained bytes. Request bytes are those exposed by Playwright; a
 `not_exposed` request body does not prove absence or complete multipart file
-coverage. Response bytes are decoded by the browser, not the compressed wire
-representation. No later fetch is substituted for the original response.
+coverage. Response bytes are the result of Playwright's `Response.body()` API.
+Playwright may satisfy that API with a credentialed follow-up load of the
+request URL when CDP has no response body. Event and transaction references
+identify the associated Playwright response object, but do not verify that the
+retained bytes came from the original network transaction. Successful selected
+response bodies include this limitation in the capture. These bytes are not
+the compressed wire representation.
 Headers preserve producer order and duplicates. Authorization,
 Proxy-Authorization, Cookie, and Set-Cookie values are null with
 `redacted: true`; ordinary values remain intact. Declared UTF-8 secret values
@@ -295,3 +312,9 @@ artifacts carry their normalized before/after digests and capture states.
 Every changed or unknown artifact record is returned inline for each aligned
 step. Missing, truncated, or mismatched capture coverage remains unknown
 instead of being treated as equality.
+
+`scenario.event_families` records the sorted, de-duplicated `capture.events`
+selection. Captures with different selections report event evidence as unknown
+with a recovery instruction, even when no selected family emitted an event.
+Captures written before this field existed omit it, so their event evidence is
+also unknown.

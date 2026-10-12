@@ -1,6 +1,6 @@
 <div align="center">
 
-[English](README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · **Русский** · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md)
+[English](README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · **Русский** · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
 
 # REA: Реверс-инжиниринг чего угодно
 
@@ -9,7 +9,6 @@
 **Нашли интересную функцию? Разберитесь, как она работает, вплоть до двоичного кода.**
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](docs/mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
@@ -18,7 +17,7 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
-**[Сайт](https://rea.tools/) · [Руководства](https://rea.tools/guides/) · [Примеры](https://rea.tools/showcase/)**
+**[Сайт](https://rea.tools/ru/) · [Руководства](https://rea.tools/ru/guides/) · [Примеры](https://rea.tools/ru/showcase/)**
 
 [Быстрый старт](#быстрый-старт) · [Как работает REA](#как-работает-rea) · [Что можно анализировать](#что-можно-анализировать) · [Примеры](#примеры) · [Частые вопросы](#частые-вопросы) · [Документация](#документация)
 
@@ -54,7 +53,7 @@ REA подключает вашего агента к инструментам �
 
 Настройка регистрирует REA в вашем агенте и устанавливает соответствующие инструкции по работе. Для нативного анализа можно использовать уже установленный Hopper или Ghidra; настройка также может установить Hopper с вашего согласия. Для статического анализа JavaScript не нужен ни один из этих движков.
 
-> **[Посетите сайт REA](https://rea.tools/)**: там есть инструкции по настройке, иллюстрированные руководства и реальные исследования.
+> **[Посетите сайт REA](https://rea.tools/ru/)**: там есть инструкции по настройке, иллюстрированные руководства и реальные исследования.
 
 ## Быстрый старт
 
@@ -131,20 +130,26 @@ npx rea-agents@latest setup
 
 REA требует Node.js 22.x (>=22.19), 24.x (>=24.11) или 26+, а также npm. Дополнительные инструменты и поддерживаемые системы зависят от цели:
 
-| Цель                        | Что возвращает REA                                                                                                         | Требования и руководство                                                                                                                     |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Нативные бинарные файлы     | Псевдокод, ассемблер, строки, символы, вызовы и ссылки                                                                     | Hopper, Ghidra или IDA; [нативный анализ](https://rea.tools/guides/native/)                                                                  |
-| Структура ELF без запуска   | Секции, сегменты, исходные символы/релокации и возможные механизмы защиты по данным статического анализа                   | pwntools, предоставленный вызывающей стороной, в Linux x64; [диагностика бинарных файлов](docs/binary-diagnostics.md)                        |
-| Байт-код EVM                | Селекторы диспетчеризации, смещения байтов, предполагаемые аргументы и изменяемость состояния                              | Локальные необработанные байты или шестнадцатеричное представление; [руководство по EVM без запуска](docs/evm-bytecode.md)                   |
-| Записанные сбои Linux       | Необработанные записи note, регистры/сигналы каждого записанного потока и необязательные кандидаты сопоставления с памятью | pwntools, предоставленный вызывающей стороной; необязательные GDB/pwndbg; [записанные сбои](docs/recorded-crashes.md)                        |
-| JavaScript / Electron       | Модули, импорты, карты исходного кода, маршруты, IPC и связи с нативными дополнениями                                      | Node.js и npm; [анализ приложений](https://rea.tools/guides/javascript/)                                                                     |
-| Сайты                       | Структура страницы, скрипты, наблюдения за сетью и запрошенные снимки экрана                                               | Браузер семейства Chrome; [анализ браузера](https://rea.tools/guides/browser/)                                                               |
-| Сохранённые сетевые захваты | Запросы, ответы, доступные полезные данные и позиции в источнике                                                           | HAR; mitmdump в Linux для захватов в собственном формате mitmproxy; [руководство по сетевым захватам](docs/web-network-captures.md)          |
-| Сборки .NET                 | Метаданные, инструкции CIL, объявленные нативные зависимости и сравнения сборок                                            | Статическое исследование; [руководство по управляемому коду](docs/managed-code-analysis.md)                                                  |
-| Android APK                 | Объявления манифеста, классы, декомпилированные методы и ссылки                                                            | JADX без графического интерфейса и полный JDK в Linux/macOS; [руководство по Android](docs/android-analysis.md)                              |
-| Прошивки                    | Области, результаты извлечения и передача в нативный анализ                                                                | Binwalk / Unblob в Linux; [руководство по прошивкам](docs/firmware-analysis.md)                                                              |
-| Пакеты и ресурсы            | Списки файлов, хеши, plist, структура пакетов Apple и извлечённые ресурсы                                                  | [Руководство по артефактам и JavaScript](docs/javascript-artifact-reconstruction.md), [приложения Apple](docs/apple-application-analysis.md) |
-| Поведение процессов         | Вывод терминала, взаимодействия, наблюдения за завершением и файловой системой, сравнения запусков                         | Linux/macOS с нативным PTY; [захват процессов](docs/process-capture.md)                                                                      |
+| Цель                          | Что возвращает REA                                                                                                         | Требования и руководство                                                                                                                     |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Нативные бинарные файлы       | Псевдокод, ассемблер, строки, символы, вызовы и ссылки                                                                     | Hopper, Ghidra или IDA; [нативный анализ](https://rea.tools/ru/guides/native/)                                                               |
+| Структура ELF без запуска     | Секции, сегменты, исходные символы/релокации и возможные механизмы защиты по данным статического анализа                   | pwntools, предоставленный вызывающей стороной, в Linux x64; [диагностика бинарных файлов](docs/binary-diagnostics.md)                        |
+| Байт-код EVM                  | Селекторы диспетчеризации, смещения байтов, предполагаемые аргументы и изменяемость состояния                              | Локальные необработанные байты или шестнадцатеричное представление в Linux x64; [руководство по EVM без запуска](docs/evm-bytecode.md)       |
+| Записанные сбои Linux         | Необработанные записи note, регистры/сигналы каждого записанного потока и необязательные кандидаты сопоставления с памятью | pwntools, предоставленный вызывающей стороной, в Linux x64; необязательные GDB/pwndbg; [записанные сбои](docs/recorded-crashes.md)           |
+| JavaScript / Electron         | Модули, импорты, карты исходного кода, маршруты, IPC и связи с нативными дополнениями                                      | Node.js и npm; [анализ приложений](https://rea.tools/ru/guides/javascript/)                                                                  |
+| Сайты                         | Структура страницы, скрипты, наблюдения за сетью и запрошенные снимки экрана                                               | Браузер семейства Chrome; [анализ браузера](https://rea.tools/ru/guides/browser/)                                                            |
+| Сохранённые сетевые захваты   | Запросы, ответы, доступные полезные данные и позиции в источнике                                                           | HAR; mitmdump в Linux для захватов в собственном формате mitmproxy; [руководство по сетевым захватам](docs/web-network-captures.md)          |
+| Сборки .NET                   | Метаданные, инструкции CIL, объявленные нативные зависимости и сравнения сборок                                            | Статическое исследование; [руководство по управляемому коду](docs/managed-code-analysis.md)                                                  |
+| Android APK                   | Объявления манифеста, классы, декомпилированные методы и ссылки                                                            | JADX без графического интерфейса и полный JDK в Linux/macOS/Windows x64; [руководство по Android](docs/android-analysis.md)                  |
+| Устройства Android            | Устройства, пакеты, процессы, журналы, дампы, снимки экрана и передача APK/файлов                                          | adb, предоставленный вызывающей стороной (эмулятор или устройство); [руководство по ADB](docs/adb-device-analysis.md)                        |
+| Проекты JEB                   | Единицы проекта от движка, дайджесты артефактов и псевдокод типов/методов                                                  | Запущенный вызывающей стороной клиент JEB с интерфейсом MCP, выбирается через REA_JEB_MCP_URL; [руководство по JEB](docs/jeb-analysis.md)    |
+| Ресурсы Android               | Декодированный манифест, таблицы строк, языки и сведения о версии                                                          | Запуск Apktool, предоставленный вызывающей стороной; [руководство по ресурсам](docs/apktool-resource-analysis.md)                            |
+| Приложения Flutter            | Хеш снапшота Dart, дайджесты библиотек по ABI и происхождение сборки движка                                                | Не требуется (статический разбор APK); [руководство по Flutter](docs/flutter-analysis.md)                                                    |
+| Прошивки                      | Области, результаты извлечения и передача в нативный анализ                                                                | Binwalk / Unblob в Linux; [руководство по прошивкам](docs/firmware-analysis.md)                                                              |
+| Записанные пакеты             | Выбранные поля, повторяющиеся значения, фильтры и правила декодирования                                                    | Linux: TShark 4.x + prlimit; [руководство по захватам](docs/packet-captures.md)                                                              |
+| Записанные логические сигналы | Аннотации декодера, диапазоны отсчётов и диагностика                                                                       | Linux: sigrok-cli 0.7.2 + prlimit; [руководство по сигналам](docs/signal-recordings.md)                                                      |
+| Пакеты и ресурсы              | Списки файлов, хеши, plist, структура пакетов Apple и извлечённые ресурсы                                                  | [Руководство по артефактам и JavaScript](docs/javascript-artifact-reconstruction.md), [приложения Apple](docs/apple-application-analysis.md) |
+| Поведение процессов           | Вывод терминала, взаимодействия, наблюдения за завершением и файловой системой, сравнения запусков                         | Linux/macOS с нативным PTY; [захват процессов](docs/process-capture.md)                                                                      |
 
 Статическое исследование JavaScript и .NET читает предоставленные файлы, не запуская приложение. Захват во время выполнения запускает выбранную цель или взаимодействует с ней с правами вашего пользователя; соответствующие руководства описывают последствия.
 
@@ -154,25 +159,25 @@ REA требует Node.js 22.x (>=22.19), 24.x (>=24.11) или 26+, а так�
 
 ## Примеры
 
-[![Иллюстрации примеров панорамирования звука в DX-Ball, моста буфера обмена Notion и кольца пуль в TH04](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+[![Иллюстрации примеров панорамирования звука в DX-Ball, моста буфера обмена Notion и кольца пуль в TH04](docs/assets/rea-showcases.png)](https://rea.tools/ru/showcase/)
 
 ### DX-Ball: восстановление расчёта звуковой панорамы
 
 Проследите звуковой вызов до функции, преобразующей координату в значение панорамы, изучите инструкции и превратите неполный псевдокод в C. Восстановленная реализация проходит 3 205 тестов с исходным x86-кодом и воспроизводит все 63 байта скомпилированной функции.
 
-[Прочитать исследование](https://rea.tools/showcase/dx-ball/) · [Репозиторий реконструкции](https://github.com/N0zoM1z0/dx-ball)
+[Прочитать исследование](https://rea.tools/ru/showcase/dx-ball/) · [Репозиторий реконструкции](https://github.com/N0zoM1z0/dx-ball)
 
 ### Notion: исследование моста буфера обмена Electron
 
 Найдите API буфера обмена в процессе рендеринга, проследите его через preload и IPC до основного процесса и изучите формат буфера обмена с форматированием.
 
-[Прочитать исследование](https://rea.tools/showcase/notion/)
+[Прочитать исследование](https://rea.tools/ru/showcase/notion/)
 
 ### TH04: восстановление расчёта кольца пуль в DOS
 
 Изучите 16-битные инструкции оригинальной игры для PC-98, восстановите расчёты фиксированных и прицельных углов и сравните восстановленный C++ с выводом компилятора того времени.
 
-[Прочитать исследование](https://rea.tools/showcase/th04/) · [Репозиторий реконструкции](https://github.com/N0zoM1z0/th04)
+[Прочитать исследование](https://rea.tools/ru/showcase/th04/) · [Репозиторий реконструкции](https://github.com/N0zoM1z0/th04)
 
 Если вы исследовали с REA что-то интересное, поделитесь результатом. Создайте [issue](https://github.com/morluto/rea/issues) или [pull request](https://github.com/morluto/rea/pulls) и укажите цель, ваш вопрос, как помог REA и что удалось узнать.
 
@@ -243,7 +248,7 @@ npx rea-agents@latest setup
 
 ## Документация
 
-Начните с [практических руководств](https://rea.tools/guides/) на сайте. Точные параметры, требования и контракты результатов описаны здесь:
+Начните с [практических руководств](https://rea.tools/ru/guides/) на сайте. Точные параметры, требования и контракты результатов описаны здесь:
 
 - [Установка и настройка](docs/installation.md): регистрация агентов, настройка провайдеров, обновление и удаление.
 - [Готовность и устранение неполадок](docs/installation.md#check-readiness-for-your-task): диагностика конкретного агента или движка анализа.
@@ -256,7 +261,7 @@ npx rea-agents@latest setup
 
 ## История звёзд
 
-🎉 **50 000 звёзд на GitHub — спасибо!**
+🎉 **110 000 звёзд на GitHub — спасибо!**
 
 Спасибо всем, кто использует REA, сообщает об ошибках, предлагает новые функции, тестирует сборки и помогает с исправлениями.
 
@@ -270,7 +275,13 @@ npx rea-agents@latest setup
 
 ## Отказ от ответственности
 
-REA предоставляет инструменты для законных исследований, анализа и реконструкции с помощью реверс-инжиниринга. Вы отвечаете за получение необходимых разрешений и соблюдение применимых законов. Проект не поддерживает незаконное или несанкционированное использование.
+Рекомендации по ответственному использованию приведены в [DISCLAIMER.md](DISCLAIMER.md).
+
+REA предназначен для законных исследований, обучения, обеспечения совместимости, сохранения программного обеспечения и анализа программ, которыми вы владеете или которые вам разрешено изучать.
+
+The project's position on illegal or unauthorized use covers all REA
+versions, distribution channels, and platforms; each copy retains its
+applicable licenses.
 
 ## Участие в проекте
 
@@ -281,3 +292,15 @@ REA предоставляет инструменты для законных и
 ## Лицензия
 
 [MIT](LICENSE)
+
+REA-authored code is licensed under MIT. Third-party material retains its own
+licenses and copyright notices; see [Third-party notices](THIRD_PARTY_NOTICES.md)
+for the dependency inventory, preserved license texts, and external-tool terms.
+
+**You must legally obtain and be authorized to use commercial tools**, including
+IDA Pro / Hex-Rays decompilers, Hopper, and JEB, under their applicable licenses.
+REA grants no tool license, key, or activation entitlement. Trials and demos
+remain subject to vendor terms, including user, feature, automation, and output
+sharing restrictions. Cracked copies, stolen keys, unauthorized key sharing,
+and bypassing license restrictions are not authorized. This guidance does not
+amend MIT or third-party licenses.

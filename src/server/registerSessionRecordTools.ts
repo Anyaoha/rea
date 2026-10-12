@@ -2,17 +2,21 @@ import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import {
-  readEvidenceBundle,
+  readImmutableEvidenceBundle,
   writeEvidenceBundle,
 } from "../application/EvidenceBundleFiles.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
-import { ok } from "../domain/result.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { err, ok } from "../domain/result.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { inspectEvidenceBundle } from "../application/investigation/InspectEvidenceBundle.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 
 interface EvidenceToolRegistration {
   readonly server: EvidenceMcpServer;
   readonly session: BinarySessionPort;
+  readonly resources: ArtifactResourceScope;
   readonly exportContract: ReturnType<
     typeof toolContract<"export_evidence_bundle">
   >;
@@ -36,6 +40,7 @@ export const registerEvidenceTools = (
 const registerExportEvidenceTool = ({
   server,
   session,
+  resources,
   exportContract,
 }: EvidenceToolRegistration): void => {
   server.registerTool(
@@ -47,6 +52,7 @@ const registerExportEvidenceTool = ({
         bundle,
         input.path,
         input.overwrite,
+        resources,
         context.mcpReq.signal,
       );
       return written.ok
@@ -72,9 +78,9 @@ const registerSnapshotEvidenceTool = ({
   server.registerTool(
     snapshotContract.name,
     toolRegistrationOptions(snapshotContract),
-    () =>
+    (input) =>
       server.delivery.toCallToolResult(
-        ok(bundleForSerialization(session)),
+        inspectEvidenceBundle(bundleForSerialization(session), input),
         snapshotContract,
       ),
   );
@@ -83,14 +89,16 @@ const registerSnapshotEvidenceTool = ({
 const registerImportEvidenceTool = ({
   server,
   session,
+  resources,
   importContract,
 }: EvidenceToolRegistration): void => {
   server.registerTool(
     importContract.name,
     toolRegistrationOptions(importContract),
-    async (input) => {
+    async (input, context) => {
       const path = input.path;
-      const loaded = await readEvidenceBundle(path);
+      const signal = context.mcpReq.signal;
+      const loaded = await readImmutableEvidenceBundle(path, signal, resources);
       if (!loaded.ok)
         return server.delivery.toCallToolResult(loaded, importContract);
       const retainedUnknownRevisions = new Set(
@@ -98,6 +106,11 @@ const registerImportEvidenceTool = ({
           unknownRevisionKey(unknown),
         ),
       );
+      if (signal.aborted)
+        return server.delivery.toCallToolResult(
+          err(new AnalysisCancelledError("import_evidence_bundle")),
+          importContract,
+        );
       const imported = session.importEvidenceBundle(loaded.value);
       return imported.ok
         ? server.delivery.toCallToolResult(

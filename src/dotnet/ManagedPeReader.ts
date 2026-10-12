@@ -1,4 +1,5 @@
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
+import { decodePeMachine } from "../domain/peMachine.js";
 import {
   managedFailure,
   ManagedReaderFailure,
@@ -38,7 +39,7 @@ export interface ManagedPeLayout {
   readonly characteristics: number;
   readonly sections: readonly PeSection[];
   readonly cli: ManagedCliHeader | null;
-  readonly cliDirectoryPresent: boolean;
+  readonly cliDirectoryState: "absent" | "present" | "unreadable";
   readonly cliIssue: ManagedParseIssue | null;
   rvaToOffset(rva: number, size: number, scope: string): number;
   rvaAvailableBytes(rva: number, scope: string): number;
@@ -66,6 +67,11 @@ interface OptionalHeader {
   readonly directoryCountOffset: number;
   readonly directoryOffset: number;
 }
+
+type CliDirectoryRead =
+  | { readonly kind: "absent" }
+  | { readonly kind: "present"; readonly directory: PeDataDirectory }
+  | { readonly kind: "unreadable"; readonly issue: ManagedParseIssue };
 
 const requireRange = (
   bytes: Buffer,
@@ -100,51 +106,96 @@ const add = (left: number, right: number, scope: string): number => {
   return result;
 };
 
-const architectureFor = (machine: number): ManagedPeLayout["architecture"] => {
-  switch (machine) {
-    case 0x014c:
-      return "x86";
-    case 0x8664:
-      return "x86_64";
-    case 0x01c0:
-    case 0x01c2:
-    case 0x01c4:
-      return "arm";
-    case 0xaa64:
-      return "arm64";
-    default:
-      throw managedFailure(
-        "invalid-directory",
-        "pe.machine",
-        `Unsupported PE machine 0x${machine.toString(16).padStart(4, "0")}`,
-      );
-  }
+const architectureFor = (
+  machine: number,
+  managed: boolean,
+): ManagedPeLayout["architecture"] => {
+  const decoded = decodePeMachine(machine);
+  if (decoded === undefined || (decoded.nativeOsOverride && !managed))
+    throw managedFailure(
+      "invalid-directory",
+      "pe.machine",
+      `Unsupported PE machine 0x${machine.toString(16).padStart(4, "0")}`,
+    );
+  return decoded.architecture;
 };
 
-const mapRva = (mapping: RvaMapping): number => {
+/** Resolve one section identity for both exact reads and available-byte queries. */
+const resolveRva = (
+  mapping: RvaMapping,
+): { readonly offset: number; readonly available: number } => {
   const { bytes, sections, rva, size, scope } = mapping;
-  if (rva === 0 && size === 0) return 0;
-  for (const section of sections) {
-    const mappedSize = Math.max(section.virtualSize, section.rawSize);
-    if (rva < section.virtualAddress) continue;
+  if (
+    !Number.isSafeInteger(rva) ||
+    !Number.isSafeInteger(size) ||
+    rva < 0 ||
+    size < 0 ||
+    rva > 0xffff_ffff ||
+    (size > 0 && size > 0x1_0000_0000 - rva)
+  )
+    throw managedFailure(
+      "invalid-directory",
+      scope,
+      `${scope} has an invalid RVA range`,
+    );
+  // VirtualSize owns RVA containment; raw size also includes alignment padding.
+  const selected = sections.find((section) => {
     const within = rva - section.virtualAddress;
-    if (within > mappedSize || size > mappedSize - within) continue;
-    if (within > section.rawSize || size > section.rawSize - within)
+    return (
+      section.virtualSize > 0 &&
+      within >= 0 &&
+      within < section.virtualSize &&
+      size <= section.virtualSize - within
+    );
+  });
+  if (selected === undefined)
+    throw managedFailure(
+      "invalid-directory",
+      scope,
+      `${scope} RVA is not covered by one PE section`,
+    );
+  for (const section of sections) {
+    if (section === selected || section.virtualSize === 0) continue;
+    const end = section.virtualAddress + section.virtualSize;
+    const intersects =
+      size === 0
+        ? rva >= section.virtualAddress && rva < end
+        : rva < end && rva + size > section.virtualAddress;
+    if (intersects)
       throw managedFailure(
         "invalid-directory",
         scope,
-        `${scope} occupies virtual bytes without file-backed data`,
+        `${scope} RVA range has ambiguous overlapping PE section mappings`,
       );
-    const offset = add(section.rawOffset, within, scope);
-    requireRange(bytes, offset, size, scope);
-    return offset;
   }
-  throw managedFailure(
-    "invalid-directory",
-    scope,
-    `${scope} RVA is not covered by a PE section`,
+  const within = rva - selected.virtualAddress;
+  if (within > selected.rawSize || size > selected.rawSize - within)
+    throw managedFailure(
+      "invalid-directory",
+      scope,
+      `${scope} occupies virtual bytes without file-backed data`,
+    );
+  const offset = add(selected.rawOffset, within, scope);
+  requireRange(bytes, offset, size, scope);
+  let available = Math.min(
+    selected.virtualSize - within,
+    selected.rawSize - within,
+    bytes.length - offset,
+    0x1_0000_0000 - rva,
   );
+  // A future overlap ends the uniquely mapped extent even if the current byte is unique.
+  for (const section of sections)
+    if (
+      section !== selected &&
+      section.virtualAddress > rva &&
+      section.virtualSize > 0
+    )
+      available = Math.min(available, section.virtualAddress - rva);
+  return { offset, available };
 };
+
+const mapRva = (mapping: RvaMapping): number =>
+  mapping.rva === 0 && mapping.size === 0 ? 0 : resolveRva(mapping).offset;
 
 const readDirectory = (bytes: Buffer, offset: number): PeDataDirectory => {
   requireRange(bytes, offset, 8, "pe.data-directory");
@@ -309,15 +360,38 @@ const readCliDirectory = (
   bytes: Buffer,
   coff: CoffHeader,
   optional: OptionalHeader,
-): PeDataDirectory => {
-  requireRange(bytes, optional.directoryCountOffset, 4, "pe.data-directories");
+): CliDirectoryRead => {
+  const countOffset = optional.directoryCountOffset - optional.optionalOffset;
+  if (countOffset + 4 > coff.optionalSize)
+    return {
+      kind: "unreadable",
+      issue: {
+        code: "invalid-directory",
+        scope: "pe.optional-header",
+        detail: "PE optional header does not contain its directory count",
+        offset: optional.directoryCountOffset,
+      },
+    };
   const directoryCount = bytes.readUInt32LE(optional.directoryCountOffset);
-  if (
-    directoryCount <= 14 ||
-    coff.optionalSize < optional.directoryOffset - optional.optionalOffset + 120
-  )
-    return { rva: 0, size: 0 };
-  return readDirectory(bytes, optional.directoryOffset + 14 * 8);
+  if (directoryCount <= 14) return { kind: "absent" };
+  const availableDirectoryCount = Math.floor(
+    (coff.optionalSize - (optional.directoryOffset - optional.optionalOffset)) /
+      8,
+  );
+  if (availableDirectoryCount < 15)
+    return {
+      kind: "unreadable",
+      issue: {
+        code: "invalid-directory",
+        scope: "pe.data-directories",
+        detail: "PE data-directory count exceeds the optional-header extent",
+        offset: optional.directoryCountOffset,
+      },
+    };
+  const directory = readDirectory(bytes, optional.directoryOffset + 14 * 8);
+  return directory.rva !== 0 || directory.size !== 0
+    ? { kind: "present", directory }
+    : { kind: "absent" };
 };
 
 /** Parse the file-backed PE and CLI layout without loading target code. */
@@ -333,45 +407,32 @@ export const readManagedPeLayout = (bytes: Buffer): ManagedPeLayout => {
   const coff = readCoffHeader(bytes);
   const optional = readOptionalHeader(bytes, coff);
   const sections = readSections(bytes, coff, optional);
-  const cliDirectory = readCliDirectory(bytes, coff, optional);
-  const cliDirectoryPresent = cliDirectory.rva !== 0 || cliDirectory.size !== 0;
+  const cliDirectoryRead = readCliDirectory(bytes, coff, optional);
+  const cliDirectoryState = cliDirectoryRead.kind;
   let cli: ManagedCliHeader | null = null;
-  let cliIssue: ManagedParseIssue | null = null;
-  if (cliDirectoryPresent)
+  let cliIssue: ManagedParseIssue | null =
+    cliDirectoryRead.kind === "unreadable" ? cliDirectoryRead.issue : null;
+  if (cliDirectoryRead.kind === "present") {
     try {
-      cli = readCliHeader(bytes, sections, cliDirectory);
+      cli = readCliHeader(bytes, sections, cliDirectoryRead.directory);
     } catch (cause: unknown) {
       if (!(cause instanceof ManagedReaderFailure)) throw cause;
       cliIssue = cause.issue;
     }
+  }
   return {
     machine: coff.machine,
-    architecture: architectureFor(coff.machine),
+    architecture: architectureFor(coff.machine, cliDirectoryState !== "absent"),
     optionalHeader: optional.optionalHeader,
     sectionCount: coff.sectionCount,
     characteristics: coff.characteristics,
     sections,
     cli,
-    cliDirectoryPresent,
+    cliDirectoryState,
     cliIssue,
     rvaToOffset: (rva, size, scope) =>
       mapRva({ bytes, sections, rva, size, scope }),
-    rvaAvailableBytes: (rva, scope) => {
-      mapRva({ bytes, sections, rva, size: 1, scope });
-      for (const section of sections) {
-        if (rva < section.virtualAddress) continue;
-        const within = rva - section.virtualAddress;
-        if (within < section.rawSize)
-          return Math.min(
-            section.rawSize - within,
-            bytes.length - section.rawOffset - within,
-          );
-      }
-      throw managedFailure(
-        "invalid-directory",
-        scope,
-        `${scope} RVA is not covered by file-backed PE section data`,
-      );
-    },
+    rvaAvailableBytes: (rva, scope) =>
+      resolveRva({ bytes, sections, rva, size: 1, scope }).available,
   };
 };

@@ -1,4 +1,5 @@
 import { advanceSpeed, simulateSpeed, SPEED_RULE } from "./dino-speed.js";
+import { t } from "./i18n.js";
 
 // A new teaching game around the recovered speed rule. Drawing, jump physics
 // and rectangle collision checks are authored for this demo.
@@ -32,9 +33,13 @@ function initializeDinoDemo(demo) {
     slider.value = speed.toFixed(1);
   };
 
+  const color = (name, fallback) =>
+    getComputedStyle(canvas).getPropertyValue(name).trim() || fallback;
+
   const draw = () => {
+    const ink = color("--dino-ink", "#5b6570");
     context.clearRect(0, 0, canvas.width, canvas.height);
-    context.strokeStyle = "#b7c0c9";
+    context.strokeStyle = color("--dino-ground", "#b7c0c9");
     context.beginPath();
     context.moveTo(0, ground);
     context.lineTo(canvas.width, ground);
@@ -43,7 +48,7 @@ function initializeDinoDemo(demo) {
       context.lineTo(x + 12, ground + 7);
     }
     context.stroke();
-    context.fillStyle = "#5b6570";
+    context.fillStyle = ink;
     for (const obstacle of obstacles) {
       context.fillRect(
         obstacle.x + 6,
@@ -58,16 +63,20 @@ function initializeDinoDemo(demo) {
     }
     context.save();
     context.translate(dinosaurX, ground - 59 - height);
-    context.fillStyle = crashed ? "#8c4b40" : "#294f82";
+    context.fillStyle = crashed
+      ? color("--dino-crash", "#8c4b40")
+      : color("--dino-player", "#294f82");
     context.fill(dinosaur);
-    context.fillStyle = "#ffffff";
+    context.fillStyle = color("--dino-eye", "#ffffff");
     context.fillRect(39, 7, 4, 4);
     context.restore();
-    context.fillStyle = "#5b6570";
+    context.fillStyle = ink;
     context.font = "13px monospace";
     context.textAlign = "right";
     context.fillText(
-      `DISTANCE ${String(Math.floor(distance / 100)).padStart(4, "0")}`,
+      t("Distance {distance}", {
+        distance: String(Math.floor(distance / 100)).padStart(4, "0"),
+      }),
       580,
       28,
     );
@@ -75,7 +84,7 @@ function initializeDinoDemo(demo) {
       context.textAlign = "center";
       context.font = "15px system-ui";
       context.fillText(
-        crashed ? "Hit a cactus. Try another speed." : "Space or Jump ↑",
+        crashed ? t("Hit a cactus. Try another speed.") : t("Space or Jump ↑"),
         330,
         85,
       );
@@ -85,7 +94,7 @@ function initializeDinoDemo(demo) {
   const stop = (message) => {
     running = false;
     cancelAnimationFrame(frame);
-    start.textContent = crashed ? "Play again" : "Play";
+    start.textContent = crashed ? t("Play again") : t("Play");
     if (message) status.textContent = message;
     draw();
   };
@@ -99,8 +108,8 @@ function initializeDinoDemo(demo) {
     obstacles = [{ x: 550, height: 38 }];
     if (auto.checked) speed = SPEED_RULE.start;
     elapsed = 0;
-    start.textContent = "Play";
-    status.textContent = "Press Play, then jump over the cactus.";
+    start.textContent = t("Play");
+    status.textContent = t("Press Play, then jump over the cactus.");
     updateSpeedDisplay();
     draw();
   };
@@ -134,7 +143,9 @@ function initializeDinoDemo(demo) {
       )
     ) {
       crashed = true;
-      stop("Hit a cactus. Press Play again, or change the speed and restart.");
+      stop(
+        t("Hit a cactus. Press Play again, or change the speed and restart."),
+      );
     }
   };
 
@@ -157,8 +168,8 @@ function initializeDinoDemo(demo) {
     running = true;
     lastTime = performance.now();
     elapsed = 0;
-    start.textContent = "Pause";
-    status.textContent = "Running. Space or Jump clears a cactus.";
+    start.textContent = t("Pause");
+    status.textContent = t("Running. Space or Jump clears a cactus.");
     frame = requestAnimationFrame(animate);
   };
 
@@ -169,7 +180,7 @@ function initializeDinoDemo(demo) {
   };
 
   start.addEventListener("click", () => {
-    if (running) stop("Paused. Press Play to continue.");
+    if (running) stop(t("Paused. Press Play to continue."));
     else play();
   });
   demo.querySelector("[data-dino-jump]").addEventListener("click", jump);
@@ -189,26 +200,33 @@ function initializeDinoDemo(demo) {
     speed = Number(slider.value);
     updateSpeedDisplay();
     status.textContent = running
-      ? `Fixed speed: ${speed.toFixed(1)}. Space or Jump clears a cactus.`
-      : `Fixed speed: ${speed.toFixed(1)}. Press Play to try it.`;
+      ? t("Fixed speed: {speed}. Space or Jump clears a cactus.", {
+          speed: speed.toFixed(1),
+        })
+      : t("Fixed speed: {speed}. Press Play to try it.", {
+          speed: speed.toFixed(1),
+        });
     draw();
   });
   auto.addEventListener("change", () => {
     if (auto.checked) speed = SPEED_RULE.start;
     updateSpeedDisplay();
     status.textContent = auto.checked
-      ? "Recovered rule: start at 6, then increase toward 13."
-      : `Fixed speed: ${speed.toFixed(1)}.`;
+      ? t("Recovered rule: start at 6, then increase toward 13.")
+      : t("Fixed speed: {speed}.", { speed: speed.toFixed(1) });
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden && running) stop("Paused. Press Play to continue.");
+    if (document.hidden && running) stop(t("Paused. Press Play to continue."));
   });
   if ("IntersectionObserver" in window) {
     new IntersectionObserver((entries) => {
       if (!entries[0].isIntersecting && running)
-        stop("Paused. Press Play to continue.");
+        stop(t("Paused. Press Play to continue."));
     }).observe(demo);
   }
+  window
+    .matchMedia("(prefers-color-scheme: dark)")
+    .addEventListener("change", draw);
   demo.querySelector(".dino-fallback").setAttribute("hidden", "");
   demo.querySelector(".dino-controls").hidden = false;
   canvas.hidden = false;
@@ -230,6 +248,10 @@ speedCheck?.addEventListener("click", () => {
       matches && speed === cell.parentElement.children[1].textContent.trim();
   });
   document.querySelector("[data-speed-check-status]").textContent = matches
-    ? "Replayed the recovered rule. All four values match the controlled original-game check when rounded to three decimals."
-    : "The replay differs from the recorded original-game values. Compare the speed rule and settings above.";
+    ? t(
+        "Replayed the recovered rule. All four values match the controlled original-game check when rounded to three decimals.",
+      )
+    : t(
+        "The replay differs from the recorded original-game values. Compare the speed rule and settings above.",
+      );
 });

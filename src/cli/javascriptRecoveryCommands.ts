@@ -27,6 +27,12 @@ export const registerJavaScriptRecoveryCommands = (
       outputDirectory: z.string().describe("Absolute absent output directory"),
     }),
     options: z.object({
+      additionalPath: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Related absolute UTF-8 JavaScript file; repeat for multiple chunks",
+        ),
       extractionMode: z
         .enum(["structural", "heuristic", "inspection"])
         .optional()
@@ -41,29 +47,36 @@ export const registerJavaScriptRecoveryCommands = (
         ),
     }),
     run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(
-          logger,
-          CLI_COMMANDS.recoverJavaScriptSources,
-          async () => {
-            const result = await service.recover(
-              {
-                path: args.path,
-                output_directory: args.outputDirectory,
-                ...(options.extractionMode === undefined
-                  ? {}
-                  : { extraction_mode: options.extractionMode }),
-                ...(options.rewriteLevel === undefined
-                  ? {}
-                  : { rewrite_level: options.rewriteLevel }),
-              },
-              { signal },
-            );
-            return result.ok
-              ? result.value
-              : projectAnalysisError(result.error);
-          },
-        ),
-      ),
+      withCommandCancellation(async (signal) => {
+        try {
+          return await logCliCommand(
+            logger,
+            CLI_COMMANDS.recoverJavaScriptSources,
+            async () => {
+              const result = await service.recover(
+                {
+                  path: args.path,
+                  output_directory: args.outputDirectory,
+                  ...(options.additionalPath === undefined
+                    ? {}
+                    : { additional_paths: options.additionalPath }),
+                  ...(options.extractionMode === undefined
+                    ? {}
+                    : { extraction_mode: options.extractionMode }),
+                  ...(options.rewriteLevel === undefined
+                    ? {}
+                    : { rewrite_level: options.rewriteLevel }),
+                },
+                { signal },
+              );
+              return result.ok
+                ? result.value
+                : projectAnalysisError(result.error);
+            },
+          );
+        } finally {
+          await service.close();
+        }
+      }),
   });
 };

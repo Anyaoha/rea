@@ -15,20 +15,19 @@ export const ingestResponseBodyShape = (
 ): void => {
   const result = recordValue(value);
   const body = cdpStringValue(result?.body);
-  if (body === undefined) {
+  const base64Encoded = result?.base64Encoded;
+  if (body === undefined || typeof base64Encoded !== "boolean") {
     invalidResponseBodyShape(state, requestId);
     return;
   }
-  const decoded =
-    result?.base64Encoded === true
-      ? decodeBase64(body)?.toString("utf8")
-      : body;
+  const decoded = base64Encoded ? decodeBase64(body)?.toString("utf8") : body;
   if (decoded === undefined) {
     invalidResponseBodyShape(state, requestId);
     return;
   }
-  const inferred = inferBodyShape(decoded);
-  updateResponseBodyShape(state, requestId, inferred.shape);
+  const shape = inferJsonShape(decoded);
+  if (shape === null) state.completeness.unavailable("json_body_shapes");
+  updateResponseBodyShape(state, requestId, shape);
 };
 
 export const requestBodyShape = (
@@ -40,10 +39,11 @@ export const requestBodyShape = (
   const body = cdpStringValue(request.postData);
   if (!isJsonContentType(recordValue(request.headers)) || body === undefined)
     return { status: "unavailable", request: null, response: null };
-  const inferred = inferBodyShape(body);
+  const shape = inferJsonShape(body);
+  if (shape === null) state.completeness.unavailable("json_body_shapes");
   return {
-    status: inferred.shape === null ? "unavailable" : "included",
-    request: inferred.shape,
+    status: shape === null ? "unavailable" : "included",
+    request: shape,
     response: null,
   };
 };
@@ -66,10 +66,6 @@ export const updateResponseBodyShape = (
     ...current,
     body_shapes: { status, request, response },
   });
-};
-
-const inferBodyShape = (text: string): { readonly shape: JsonShape | null } => {
-  return { shape: inferJsonShape(text) };
 };
 
 const invalidResponseBodyShape = (

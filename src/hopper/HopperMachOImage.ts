@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { open, type FileHandle } from "node:fs/promises";
 import { z } from "zod";
 
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import {
+  isMachOFormat,
+  isElfMetadataArchitecture,
+  type BinaryTarget,
+} from "../domain/binaryTargetTypes.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
@@ -44,6 +48,11 @@ export const resolveHopperMachOImage = async (
       ),
     );
   if (signal?.aborted) return err(new AnalysisCancelledError("open_binary"));
+  if (
+    !isMachOFormat(target.format) ||
+    isElfMetadataArchitecture(target.architecture)
+  )
+    return invalid("Hopper FAT64 image preparation requires a Mach-O target");
   let file: FileHandle;
   try {
     file = await open(target.path, "r");

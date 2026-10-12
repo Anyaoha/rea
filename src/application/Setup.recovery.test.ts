@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { runSetup } from "./Setup.js";
+import type { SetupProgressEvent } from "./SetupTypes.js";
 
 describe("setup workflow", () => {
   it("rejects Node 25 before applying setup actions", async () => {
@@ -54,14 +58,27 @@ describe("setup workflow", () => {
     const host = new FakeSetupHost();
     host.hopper = "/Applications/Hopper";
     host.skill = "failed";
+    const progress: SetupProgressEvent[] = [];
     const result = await runSetup(
-      { ...options(true), installSkill: true, clientIds: [] },
+      {
+        ...options(true),
+        installSkill: true,
+        clientIds: [],
+        onProgress: (event) => {
+          if (event.actionId === "install_skill") progress.push(event);
+        },
+      },
       host,
     );
     expect(result.status).toBe("needs_human");
-    expect(result.remediation).toBe(
-      "REA analysis skill could not be installed or verified. Check permissions for its planned skill directories, then rerun setup.",
-    );
+    expect(result.code).toBe("skill_install_failed");
+    expect(result.remediation).toContain("REA skill write failed at");
+    expect(result.remediation).toContain("injected skill write failure");
+    expect(result.remediation).toContain("Check permissions and rerun setup.");
+    expect(progress.at(-1)).toMatchObject({
+      state: "failed",
+      detail: expect.stringContaining("injected skill write failure"),
+    });
   });
 
   it("delegates remaining unhealthy checks to doctor remediation", async () => {
@@ -104,6 +121,76 @@ describe("setup workflow", () => {
       doctor: { healthy: true, environment_healthy: false },
     });
     expect(host.doctorScopes).toEqual(expect.arrayContaining([readinessScope]));
+  });
+});
+
+describe("setup failure cleanup projection", () => {
+  it("projects a configuration failure together with failed host cleanup", async () => {
+    const configPath = "/fixture/home/vscode/settings.json";
+    const primary = new ConfigurationError("Client config could not be read", {
+      settings: [
+        {
+          setting: configPath,
+          constraint: "The selected config could not be read.",
+        },
+      ],
+      cleanup: {
+        reason: "The admitted config handle remains open.",
+        resources: [configPath],
+      },
+    });
+    class SetupHostWithCleanupFailure extends FakeSetupHost {
+      close = async (): Promise<string> =>
+        "Setup could not release its client configuration resources.";
+    }
+    const host = new SetupHostWithCleanupFailure();
+    host.clients = [{ name: "codex", configPath }];
+    host.inspectClientConfiguration = async () => {
+      throw primary;
+    };
+
+    const failure = await runSetup(
+      { ...options(true), clientIds: ["codex"] },
+      host,
+    ).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(AnalysisError);
+    if (!(failure instanceof AnalysisError))
+      throw new Error("Expected setup to preserve a typed analysis failure");
+
+    const projected = projectAnalysisError(failure);
+    expect(projected).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        cleanup: "incomplete",
+        resources: [configPath],
+        diagnostics: {
+          primary_error: {
+            code: "cleanup_incomplete",
+            details: { resources: [configPath] },
+          },
+          cleanup_error: {
+            code: "cleanup_incomplete",
+            details: { resources: [configPath] },
+          },
+        },
+      },
+    });
+    expect(projected.details).toMatchObject({
+      diagnostics: {
+        primary_error: { message: expect.stringContaining("selected config") },
+        cleanup_error: {
+          details: {
+            diagnostics: {
+              reason:
+                "Setup could not release its client configuration resources.",
+            },
+          },
+        },
+      },
+    });
   });
 });
 
@@ -159,6 +246,7 @@ describe("setup scoped readiness", () => {
       clients: ["codex"],
       providers: [],
       skill: true,
+      skillClients: ["codex"],
     });
   });
 
@@ -194,7 +282,7 @@ describe("setup scoped readiness", () => {
     expect(result.status).toBe("needs_human");
     expect(host.hopperInstalls).toBe(0);
     expect(result.remediation).toBe(
-      "Automated Hopper setup supports Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, and CachyOS; configure an existing supported provider instead.",
+      "Automated Hopper setup supports Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, and Omarchy; configure an existing supported provider instead.",
     );
   });
 

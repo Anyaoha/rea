@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   GHIDRA_SESSION_CAPABILITIES,
+  GHIDRA_MUTATING_OPERATIONS,
   parseGhidraSessionInfo,
 } from "./GhidraSessionValues.js";
 
@@ -51,6 +52,40 @@ describe("Ghidra DOS import commitment", () => {
   });
 });
 
+describe("Ghidra MIPS soft-float storage report", () => {
+  const valid = {
+    policy: "o32-soft-float-prototype-v1",
+    functions: 2,
+    definitions: 1,
+  };
+  it("accepts the exact committed policy outcome", () => {
+    const parsed = parseGhidraSessionInfo(
+      { ...session(), mips_soft_float_storage: valid },
+      expected,
+    );
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.mips_soft_float_storage).toEqual(valid);
+  });
+  it.each([
+    [
+      "the superseded storage policy",
+      { policy: "o32-integer-registers-v1", remapped: 2, retyped: 1 },
+    ],
+    ["a negative count", { ...valid, definitions: -1 }],
+    ["a fractional count", { ...valid, functions: 1.5 }],
+    ["a missing count", { policy: valid.policy, functions: 2 }],
+    ["an undeclared field", { ...valid, skipped: 0 }],
+    ["a non-object report", "functions"],
+  ])("rejects %s", (_label, report) => {
+    expect(
+      parseGhidraSessionInfo(
+        { ...session(), mips_soft_float_storage: report },
+        expected,
+      ).ok,
+    ).toBe(false);
+  });
+});
+
 describe("Ghidra mutation handshake", () => {
   it("requires the exact mutation authority and rejects duplicate capabilities", () => {
     const value = session();
@@ -81,7 +116,7 @@ describe("Ghidra mutation handshake", () => {
       ...value,
       read_only: true,
       capabilities: value.capabilities.filter(
-        (c) => c !== "annotate_native_function",
+        (c) => !GHIDRA_MUTATING_OPERATIONS.has(c),
       ),
     };
     expect(
@@ -91,5 +126,25 @@ describe("Ghidra mutation handshake", () => {
     expect(
       parseGhidraSessionInfo(value, { ...expected, expectedReadOnly: true }).ok,
     ).toBe(false);
+  });
+  it("treats address naming as database mutation", () => {
+    expect([...GHIDRA_MUTATING_OPERATIONS].sort()).toEqual([
+      "annotate_native_function",
+      "set_address_name",
+      "set_addresses_names",
+    ]);
+    const value = session();
+    for (const naming of ["set_address_name", "set_addresses_names"]) {
+      expect(value.capabilities).toContain(naming);
+      expect(
+        parseGhidraSessionInfo(
+          {
+            ...value,
+            capabilities: value.capabilities.filter((c) => c !== naming),
+          },
+          expected,
+        ).ok,
+      ).toBe(false);
+    }
   });
 });

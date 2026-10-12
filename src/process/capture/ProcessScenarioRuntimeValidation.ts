@@ -1,45 +1,50 @@
-import { access, realpath, stat } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
+import { access, realpath, stat } from "node:fs/promises";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
-import {
-  ProcessCaptureError,
-  processCaptureCancelled,
-} from "./ProcessCaptureError.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { snapshotEnvironment } from "../snapshotEnvironment.js";
+import { processCaptureCancelled } from "./ProcessCaptureError.js";
 
 /** Resolve caller-selected executable and observation paths for this execution. */
 export const resolveProcessScenarioRuntimePaths = async (
   scenario: ProcessScenario,
   environment: Readonly<Record<string, string | undefined>> = process.env,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<ProcessScenario> => {
   const selectedWorkingDirectory = resolve(scenario.working_directory);
   let workingDirectory: string;
   try {
     workingDirectory = await realpath(selectedWorkingDirectory);
   } catch (cause: unknown) {
-    throw new ProcessCaptureError(
+    throw invalidScenarioPath(
+      "working_directory",
       `working directory could not be resolved: ${selectedWorkingDirectory}${osFailure(cause)}`,
-      { cause },
+      cause,
     );
   }
   let workingDirectoryStat;
   try {
     workingDirectoryStat = await stat(workingDirectory);
   } catch (cause: unknown) {
-    throw new ProcessCaptureError(
+    throw invalidScenarioPath(
+      "working_directory",
       `working directory could not be inspected: ${workingDirectory}${osFailure(cause)}`,
-      { cause },
+      cause,
     );
   }
   if (!workingDirectoryStat.isDirectory())
-    throw new ProcessCaptureError(
+    throw invalidScenarioPath(
+      "working_directory",
       `working directory is not a directory: ${workingDirectory}`,
     );
   const executable = await resolveExecutable(
     scenario.executable,
     workingDirectory,
-    scenario.environment.PATH ?? environment.PATH ?? "",
+    snapshotEnvironment(scenario.environment, platform).PATH ??
+      snapshotEnvironment(environment, platform).PATH ??
+      "",
   );
   const observationPaths = scenario.filesystem_observation_paths.map((path) =>
     resolve(workingDirectory, path),
@@ -76,18 +81,26 @@ export const resolveExecutable = async (
       if ((await stat(candidate)).isFile()) return candidate;
       failures.push(`${candidate} (not a regular file)`);
     } catch (cause: unknown) {
-      const code = osErrorCode(cause);
-      if (code !== "ENOENT" && code !== "ENOTDIR")
-        failures.push(`${candidate}${osFailure(cause)}`);
+      failures.push(`${candidate}${osFailure(cause)}`);
       continue;
     }
   }
-  throw new ProcessCaptureError(
-    failures.length === 0
-      ? `executable could not be resolved: ${command}`
-      : `executable could not be resolved: ${command}; checked ${failures.join("; ")}`,
+  throw invalidScenarioPath(
+    "executable",
+    `executable could not be resolved: ${command}; checked ${failures.join("; ")}`,
   );
 };
+
+const invalidScenarioPath = (
+  field: "executable" | "working_directory",
+  message: string,
+  cause?: unknown,
+): AnalysisInputError =>
+  new AnalysisInputError(
+    "capture_process_scenario",
+    cause === undefined ? undefined : { cause },
+    [{ path: [field], reason: "invalid_value", message }],
+  );
 
 const osErrorCode = (cause: unknown): string | undefined =>
   typeof cause === "object" &&

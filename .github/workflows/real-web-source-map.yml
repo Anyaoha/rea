@@ -1,27 +1,6 @@
 name: Real website source-map verification
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/real-web-source-map.yml"
-      - "scripts/verify-browser-source-maps.mjs"
-      - "scripts/lib/browser-source-map-e2e.mjs"
-      - "scripts/fixtures/browser-source-map-site.mjs"
-      - "src/javascript/sourceMaps/**"
-      - "src/browser/assets/**"
-      - "src/domain/webSource*.ts"
-      - "src/domain/webScript*.ts"
-      - "src/application/WebSourceLocation*.ts"
-      - "src/application/ValidateSelectedWebScript.ts"
-      - "src/composition/webSourceLocations.ts"
-      - "src/server/registerWebSourceLocationTool.ts"
-      - "src/server/createServer.ts"
-      - "src/contracts/webScriptToolContracts.ts"
-      - "src/process/**"
-      - "src/cli/webSourceLocationCommands.ts"
-      - "src/cli.ts"
-      - "src/artifacts/readStableArtifact.ts"
-      - "package.json"
-      - "package-lock.json"
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
@@ -38,9 +17,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - uses: ./.github/actions/portable-build-cache
       - name: Install the pinned compiler into an isolated fixture directory
         run: npm install --prefix "$RUNNER_TEMP/rea-web-source-map-compiler" --no-audit --no-fund --package-lock=false esbuild@0.25.10
       - run: npm run verify:browser:source-maps

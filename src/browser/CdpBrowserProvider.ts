@@ -43,9 +43,10 @@ import {
   type WebScreenshotDiff,
 } from "../domain/webScreenshot.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { type BrowserObservationOperation } from "../domain/browserObservationErrors.js";
+import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   discoverCdpEndpoint,
@@ -67,6 +68,7 @@ import { captureCdpScreenshot } from "./CdpScreenshot.js";
 import { comparePngScreenshots } from "./PngVisualDiff.js";
 
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 const CLEANUP_DOMAINS = ["Network", "Debugger", "Runtime", "Page"] as const;
 
 /** Passive browser observation through a selected user-owned CDP endpoint. */
@@ -105,6 +107,11 @@ export class CdpBrowserProvider implements BrowserObservationPort {
               : [
                   `${String(selected.unconnectable)} otherwise allowed page target(s) lacked a validated direct CDP WebSocket and were excluded.`,
                 ]),
+            ...(selected.allowed.some((target) => target.attached === null)
+              ? [
+                  "CDP discovery omitted attachment state for one or more targets; attached is reported as unknown.",
+                ]
+              : []),
           ],
         }),
       );
@@ -314,6 +321,12 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     try {
       return ok(webScreenshotDiffSchema.parse(comparePngScreenshots(input)));
     } catch (cause: unknown) {
+      if (cause instanceof TypeError)
+        return err(
+          new AnalysisInputError("compare_web_screenshots", { cause }, [
+            { path: [], reason: "invalid_format", message: cause.message },
+          ]),
+        );
       return err(providerError(cause, "compare_web_screenshots"));
     }
   }
@@ -401,7 +414,9 @@ const selectTargets = (
       attached: target.attached,
     });
   }
-  allowed.sort((left, right) => left.target_id.localeCompare(right.target_id));
+  allowed.sort((left, right) =>
+    compareUnicodeCodePoints(left.target_id, right.target_id),
+  );
   return {
     allowed,
     excluded: {

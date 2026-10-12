@@ -10,12 +10,23 @@ const server = new McpServer({
   version:
     mode === "empty-server-identity" ? "" : mode === "version" ? "99.0.0" : "1",
 });
+const requestedCount = Number.parseInt(
+  process.env.REA_FAKE_JADX_CLASS_COUNT ?? "",
+  10,
+);
+const generatedCount =
+  Number.isInteger(requestedCount) && requestedCount >= 0
+    ? requestedCount
+    : mode === "large-inventory"
+      ? 9000
+      : 400;
 const classes = [
   "fixture.Target",
   ...Array.from(
-    { length: mode === "large-inventory" ? 9000 : 400 },
+    { length: generatedCount },
     (_, index) => `fixture.Class${index}`,
   ),
+  ...(mode === "duplicate-class-name" ? ["fixture.Target"] : []),
 ];
 const methods = [
   {
@@ -148,3 +159,6 @@ for (const name of ["get_xrefs_to_class", "get_xrefs_to_method"])
     }),
   );
 await server.connect(new StdioServerTransport());
+// A refused cleanup must leave a live process for verified fixture teardown.
+// Otherwise stdin EOF races the ownership scan with the server's natural exit.
+if (mode === "cleanup-failure") setInterval(() => {}, 1000);

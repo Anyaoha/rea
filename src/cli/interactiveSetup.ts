@@ -16,6 +16,7 @@ import type {
   SetupResult,
 } from "../application/SetupTypes.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../application/SupportedClients.js";
+import { invokingPackageRunner } from "../application/ClientRegistrationIdentity.js";
 
 const clientDisplayNames: ReadonlyMap<string, string> = new Map(
   SUPPORTED_CLIENT_DEFINITIONS.map(({ name, displayName }) => [
@@ -79,6 +80,13 @@ export const renderSetupProgress = (event: SetupProgressEvent): void => {
           : "✗";
   const suffix = event.detail === undefined ? "" : ` · ${event.detail}`;
   writeLine(`${symbol}  ${event.label}${suffix}`);
+};
+
+/** Show the resolved dry-run plan to a human at an interactive terminal. */
+export const renderSetupDryRun = (actions: readonly SetupAction[]): void => {
+  intro("REA setup plan", promptStreams);
+  renderPreflight(actions);
+  outro("Dry run complete. No changes were made.", promptStreams);
 };
 
 /** Finish an interactive setup journey without exposing the full doctor catalog. */
@@ -224,8 +232,10 @@ const renderKeyboardHelp = (accessible: boolean): void => {
   );
 };
 
-const cliInvocation = (environment: Readonly<NodeJS.ProcessEnv>): string =>
-  environment.npm_command === "exec" ? "npx rea-agents" : "rea";
+const cliInvocation = (environment: Readonly<NodeJS.ProcessEnv>): string => {
+  const runner = invokingPackageRunner(environment);
+  return runner === undefined ? "rea" : `${runner} rea-agents`;
+};
 
 const renderReadyCapabilities = (
   result: SetupResult,

@@ -1,4 +1,4 @@
-import { type WebSocket } from "ws";
+import type { WebSocket } from "ws";
 
 import type { FakeCdpCommand, FakeOptions } from "./fakeCdpBrowserTypes.js";
 
@@ -247,6 +247,7 @@ const emitSessionTimeline = (
       frameId: "frame-main",
       loaderId: "loader-redirect",
       request: { url: redirectUrl, method: "GET" },
+      initiator: { type: "other" },
       redirectResponse: { status: 302 },
       timestamp: 13,
     });
@@ -294,6 +295,7 @@ const emitSameOriginRedirectEvents = (
     requestId: "request-1",
     type: "Fetch",
     request: { url: intermediate, method: "GET" },
+    initiator: { type: "other" },
     redirectResponse: {
       url,
       status: 301,
@@ -307,6 +309,7 @@ const emitSameOriginRedirectEvents = (
     requestId: "request-1",
     type: "Fetch",
     request: { url: finalUrl, method: "GET" },
+    initiator: { type: "other" },
     redirectResponse: {
       url: intermediate,
       status: 302,
@@ -328,6 +331,7 @@ const emitReturnFromDisallowedRedirect = (
     requestId: "request-1",
     type: "Fetch",
     request: { url: finalUrl, method: "GET" },
+    initiator: { type: "other" },
     redirectResponse: {
       url: "https://private.example.test/outside?token=redirect-url-secret",
       status: 302,
@@ -360,6 +364,7 @@ const emitMalformedRedirectPriorResponse = (
         token: "prior-body",
       }),
     },
+    initiator: { type: "other" },
     redirectResponse: {
       url: initialUrl,
       status: 307,
@@ -403,6 +408,7 @@ const emitMalformedRedirect = (
     requestId: "request-1",
     type: "Fetch",
     request: { url: finalUrl, method: "GET" },
+    initiator: { type: "other" },
     ...(options.omitRedirectResponse === true ? {} : { redirectResponse }),
     timestamp: 9,
   });
@@ -476,6 +482,7 @@ const emitNetworkEvents = (
         url: "https://private.example.test/redirected",
         method: "GET",
       },
+      initiator: { type: "other" },
       redirectResponse: {
         url,
         status: 302,
@@ -516,6 +523,7 @@ const emitNetworkEvents = (
     requestId: "websocket-1",
     url: `ws://127.0.0.1:${String(port)}/live?token=websocket-url-secret`,
   });
+  if (options.webSocketWithoutFrames === true) return;
   event(socket, "Network.webSocketFrameSent", command.sessionId, {
     requestId: "websocket-1",
     response: {

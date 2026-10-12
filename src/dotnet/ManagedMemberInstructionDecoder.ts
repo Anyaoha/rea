@@ -1,3 +1,5 @@
+import type { ManagedDecodeBudget } from "./ManagedDecodeBudget.js";
+import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
 import type {
   ManagedExceptionRegion,
   ManagedInstructionAnchor,
@@ -380,6 +382,7 @@ const readOperand = (
 
 export const decodeInstructions = (
   il: Buffer,
+  admitInstruction?: (offset: number) => void,
 ): {
   readonly parsed: readonly ParsedInstruction[];
   readonly instructionStarts: readonly number[];
@@ -408,6 +411,9 @@ export const decodeInstructions = (
         issue = `Instruction ${descriptor.name} at IL offset ${String(start)} leaves method body`;
         break;
       }
+      // Charge each actual instruction before growing the decoded arrays.
+      // A multi-byte operand must not consume a full record per raw IL byte.
+      admitInstruction?.(start);
       offset = operand.next;
       if (PREFIX_OPCODES.has(descriptor.name)) {
         prefixStart ??= start;
@@ -423,6 +429,7 @@ export const decodeInstructions = (
       });
     }
   } catch (cause: unknown) {
+    if (cause instanceof ManagedReaderFailure) throw cause;
     issue =
       cause instanceof Error ? cause.message : "Instruction decode failed";
   }
@@ -434,6 +441,7 @@ export const parseExceptionRegions = (
   bytes: Buffer,
   offset: number,
   methodEnd: number,
+  budget?: ManagedDecodeBudget,
 ): ExceptionRegionParseResult => {
   const regions: ManagedExceptionRegion[] = [];
   let sectionOffset = offset;
@@ -487,7 +495,15 @@ export const parseExceptionRegions = (
       );
 
     const count = (size - 4) / clauseSize;
-    regions.push(...readExceptionClauses(bytes, sectionOffset + 4, count, fat));
+    // Accumulates with the method IL bound; the body reserves what it retains.
+    budget?.admitTransient(count * 256, sectionOffset);
+    for (const region of readExceptionClauses(
+      bytes,
+      sectionOffset + 4,
+      count,
+      fat,
+    ))
+      regions.push(region);
 
     hasMoreSections = (kind & 0x80) !== 0;
     sectionOffset += size;

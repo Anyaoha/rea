@@ -1,6 +1,6 @@
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
@@ -136,6 +136,20 @@ describe("MCP composed workflow snapshot replay", () => {
       })
       .passthrough()
       .parse(output);
+    const primitiveResult = await mcp.callTool({
+      name: "list_strings",
+      arguments: { document: "fixture" },
+    });
+    expect(
+      primitiveResult.isError,
+      JSON.stringify(primitiveResult.content),
+    ).not.toBe(true);
+    const primitiveEvidence = toolContract("list_strings").outputSchema.parse(
+      primitiveResult.structuredContent,
+    );
+    expect(primitiveEvidence).toMatchObject({
+      subject: { local_path: targetPath },
+    });
     const afterAnalysisCalls = [...calls];
     const afterAnalysisStarts = [...starts];
 
@@ -163,6 +177,47 @@ describe("MCP composed workflow snapshot replay", () => {
       }),
     );
 
+    const relocatedPath = join(dirname(targetPath), "relocated.hop");
+    await writeFile(relocatedPath, "fixture.hop");
+    const reopened = await mcp.callTool({
+      name: "open_binary",
+      arguments: { path: relocatedPath, snapshot_path: snapshotPath },
+    });
+    expect(reopened.isError, JSON.stringify(reopened.content)).not.toBe(true);
+    const cachedPrimitive = await mcp.callTool({
+      name: "list_strings",
+      arguments: { document: "fixture" },
+    });
+    expect(
+      cachedPrimitive.isError,
+      JSON.stringify(cachedPrimitive.content),
+    ).not.toBe(true);
+    const cachedEvidence = toolContract("list_strings").outputSchema.parse(
+      cachedPrimitive.structuredContent,
+    );
+    expect(cachedEvidence).toMatchObject({
+      subject: { local_path: relocatedPath },
+    });
+    expect(cachedEvidence.normalized_result).toEqual(
+      primitiveEvidence.normalized_result,
+    );
+    expect(cachedEvidence.raw_result).toEqual(primitiveEvidence.raw_result);
+    const retained = await mcp.callTool({
+      name: "get_evidence_bundle",
+      arguments: {},
+    });
+    expect(retained.isError, JSON.stringify(retained.content)).not.toBe(true);
+    const retainedBundle = toolContract(
+      "get_evidence_bundle",
+    ).outputSchema.parse(retained.structuredContent).result;
+    expect(
+      retainedBundle.records.find(
+        ({ evidence_id }) => evidence_id === primitiveEvidence.evidence_id,
+      )?.subject?.local_path,
+    ).toBe(targetPath);
+    expect(calls).toEqual(afterAnalysisCalls);
+    expect(starts).toEqual(afterAnalysisStarts);
+
     const dependencies: DirectAnalysisDependencies = {
       readConfiguration: () => parseConfig({}),
       createBinarySession: () => createWorkflowSession(provider),
@@ -180,7 +235,9 @@ describe("MCP composed workflow snapshot replay", () => {
     expect(calls).toEqual(afterAnalysisCalls);
     expect(starts).toEqual(afterAnalysisStarts);
   });
+});
 
+describe("MCP live workflow snapshot policy", () => {
   it("does not bind a workflow when an upstream operation is live", async () => {
     const { targetPaths, snapshotPath } = await createWorkflowFiles(
       "rea-mcp-live-workflow-snapshot-",
@@ -282,26 +339,27 @@ describe("MCP investigation history snapshot replay", () => {
       const foreignEvidence = toolContract("list_strings").outputSchema.parse(
         unrelated.structuredContent,
       );
+      const updateInput = {
+        unknown_id: unknown.unknown_id,
+        expected_revision: unknown.revision,
+        status: "resolved",
+        severity: input.severity,
+        supporting_evidence_ids: resolutionEvidenceIds,
+        contradicting_evidence_ids: input.contradicting_evidence_ids,
+        required_authority: input.required_authority,
+        required_confidence: input.required_confidence,
+        required_environment: input.required_environment,
+        recommended_probes: input.recommended_probes,
+        relationships: input.relationships,
+        resolution: {
+          disposition,
+          rationale: "Disposition recorded after further investigation.",
+          evidence_ids: resolutionEvidenceIds,
+        },
+      };
       const updated = await mcp.callTool({
         name: "update_unknown",
-        arguments: {
-          unknown_id: unknown.unknown_id,
-          expected_revision: unknown.revision,
-          status: "resolved",
-          severity: input.severity,
-          supporting_evidence_ids: resolutionEvidenceIds,
-          contradicting_evidence_ids: input.contradicting_evidence_ids,
-          required_authority: input.required_authority,
-          required_confidence: input.required_confidence,
-          required_environment: input.required_environment,
-          recommended_probes: input.recommended_probes,
-          relationships: input.relationships,
-          resolution: {
-            disposition,
-            rationale: "Disposition recorded after further investigation.",
-            evidence_ids: resolutionEvidenceIds,
-          },
-        },
+        arguments: updateInput,
       });
       expect(updated.isError, JSON.stringify(updated.content)).not.toBe(true);
       const resolved = toolContract("update_unknown").outputSchema.parse(
@@ -327,6 +385,7 @@ describe("MCP investigation history snapshot replay", () => {
       expect(snapshot.value.evidence_bundle.records).toContainEqual(
         expect.objectContaining({
           operation: "update_unknown",
+          parameters: updateInput,
           subject: expect.objectContaining({ local_path: secondPath }),
         }),
       );

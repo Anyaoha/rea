@@ -13,8 +13,6 @@ import { promisify } from "node:util";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 
-import { analysisErrorProjectionSchema } from "../../dist/contracts/errorSchemas.js";
-
 import { verifyLegacyGhidraReferenceSnapshot } from "./ghidra-reference-snapshot-e2e.mjs";
 import { verifyGhidraSnapshotLifecycle } from "./real-ghidra-snapshot-lifecycle.mjs";
 import { verifyGhidraTargetAdmission } from "./real-ghidra-target-admission.mjs";
@@ -40,7 +38,11 @@ export async function verifyGhidraBoundaries(
         ajv.validateSchema(tool[key]),
         `${tool.name} ${key}: ${JSON.stringify(ajv.errors)}`,
       );
-    validators.set(tool.name, ajv.compile(tool.outputSchema));
+    validators.set(
+      tool.name,
+      (tool.outputSchema?.$id && ajv.getSchema(tool.outputSchema.$id)) ||
+        ajv.compile(tool.outputSchema),
+    );
   }
   let successfulCalls = 0;
   let rejectedCalls = 0;
@@ -54,6 +56,15 @@ export async function verifyGhidraBoundaries(
       `${name}: ${JSON.stringify(validate.errors)}`,
     );
     assert.deepEqual(reply.structuredContent, JSON.parse(mcpTextValue(reply)));
+    if (name === "list_strings" || name === "search_strings")
+      assert.ok(
+        reply.structuredContent.limitations.some((limitation) =>
+          /Only Ghidra-defined string Data.*empty search does not establish/u.test(
+            limitation,
+          ),
+        ),
+        `${name} omitted defined-string coverage`,
+      );
     successfulCalls++;
     return result;
   };
@@ -373,6 +384,12 @@ export async function verifyGhidraBoundaries(
       })
     ).some((item) => item.address === marker.address),
     false,
+  );
+  assert.deepEqual(
+    await call("search_strings", {
+      pattern: `REA_GHIDRA_ABSENT_${randomUUID()}`,
+    }),
+    [],
   );
   assert.equal(
     (await call("inspect_native_instruction", { address: strings[0].address }))

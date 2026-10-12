@@ -57,6 +57,10 @@ const region = z.object({
   end_offset: integer,
   size: integer,
 });
+type BlobOrigin = {
+  readonly handler: string | null;
+  readonly range: { readonly offset: number; readonly length: number } | null;
+};
 const known = new Set([
   "StatReport",
   "HashReport",
@@ -67,6 +71,53 @@ const known = new Set([
   "CarveDirectoryReport",
   "MultiFileReport",
 ]);
+
+const dependencyFailure = z.object({
+  __typename__: z.literal("ExtractorDependencyNotFoundReport"),
+  dependencies: z.array(z.string().min(1)).min(1),
+});
+
+/** Collect the named extractors from any dependency report nested in one value. */
+const missingDependencies = (value: unknown): string[] => {
+  const found: string[] = [];
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item);
+      return;
+    }
+    if (typeof node !== "object" || node === null) return;
+    const failure = dependencyFailure.safeParse(node);
+    if (failure.success) {
+      for (const dependency of failure.data.dependencies)
+        if (!found.includes(dependency)) found.push(dependency);
+      return;
+    }
+    for (const child of Object.values(node)) visit(child);
+  };
+  visit(value);
+  return found;
+};
+
+/**
+ * Name the missing extractors and the producing stage for one extraction
+ * problem so a caller can act without decoding the raw report. The original
+ * report stays retained alongside the normalized fields.
+ */
+const extractionDiagnostic = (
+  inputPath: string,
+  stage: string | null,
+  report: JsonValue,
+): JsonValue => {
+  const dependencies = missingDependencies(report);
+  return {
+    input_path: inputPath,
+    ...(stage === null ? {} : { stage }),
+    ...(dependencies.length === 0
+      ? {}
+      : { missing_dependencies: dependencies }),
+    report,
+  };
+};
 
 /** Interpret the pinned Binwalk report without inventing validated region lengths. */
 export const normalizeBinwalkReport = (
@@ -144,6 +195,20 @@ export const normalizeUnblobReport = (
   const sizes = new Map<string, number>();
   const depths: string[] = [];
   const diagnostics: JsonValue[] = [];
+  const blobOrigins = new Map<string, BlobOrigin>();
+  const addBlobOrigin = (
+    parentPath: string,
+    id: string,
+    origin: BlobOrigin,
+  ) => {
+    const key = JSON.stringify([parentPath, id]);
+    if (blobOrigins.has(key))
+      throw new AnalysisOutputError(
+        "extract_firmware",
+        `Duplicate blob identity in parent task: ${parentPath} (${id})`,
+      );
+    blobOrigins.set(key, origin);
+  };
   const chunks: {
     input_path: string;
     provider_id: string;
@@ -234,7 +299,17 @@ export const normalizeUnblobReport = (
             : null;
         if (detail !== null)
           for (const problem of detail.extraction_reports)
-            diagnostics.push({ input_path: path, report: problem });
+            diagnostics.push(
+              extractionDiagnostic(
+                path,
+                detail.handler_name,
+                jsonValueSchema.parse(problem),
+              ),
+            );
+        addBlobOrigin(path, parsed.id, {
+          handler: detail?.handler_name ?? null,
+          range: { offset: parsed.start_offset, length: parsed.size },
+        });
         chunks.push({
           input_path: path,
           provider_id: parsed.id,
@@ -252,24 +327,24 @@ export const normalizeUnblobReport = (
       }
       if (item.__typename__ === "MultiFileReport") {
         const parsed = multiFile.parse(item);
+        addBlobOrigin(path, parsed.id, {
+          handler: parsed.handler_name,
+          range: null,
+        });
         if (parsed.extraction_reports.length > 0)
-          diagnostics.push({ input_path: path, report: item });
+          diagnostics.push(
+            extractionDiagnostic(
+              path,
+              parsed.handler_name,
+              jsonValueSchema.parse(item),
+            ),
+          );
       }
     }
   }
   const recordsByPath = new Map(
     records.map((record) => [record.task.path, record.task]),
   );
-  const chunksByOrigin = new Map<string, (typeof chunks)[number]>();
-  for (const item of chunks) {
-    const key = JSON.stringify([item.input_path, item.provider_id]);
-    if (chunksByOrigin.has(key))
-      throw new AnalysisOutputError(
-        "extract_firmware",
-        `Duplicate chunk identity in ${item.input_path}`,
-      );
-    chunksByOrigin.set(key, item);
-  }
   const derivations = records.flatMap((record) =>
     record.subtasks.map((child) => {
       const parentPath = logical(record.task.path);
@@ -289,7 +364,7 @@ export const normalizeUnblobReport = (
           "extract_firmware",
           `Child task identity disagrees with its analysis: ${childPath}`,
         );
-      const origin = chunksByOrigin.get(
+      const origin = blobOrigins.get(
         JSON.stringify([parentPath, child.blob_id]),
       );
       return {

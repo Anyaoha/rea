@@ -14,6 +14,8 @@ const HeadlessPackage =
 const SerializePackage =
   require("@xterm/addon-serialize") as typeof import("@xterm/addon-serialize");
 
+const TRAILING_SPACES = / +$/u;
+
 interface TerminalRendererOptions {
   readonly columns: number;
   readonly rows: number;
@@ -53,12 +55,16 @@ export class TerminalRenderer {
 
   /** Queue one PTY chunk and capture state only after xterm has parsed it. */
   write(data: string, atMs: number): void {
-    this.#pending = this.#pending.then(
+    this.#queue(
       () =>
-        new Promise<void>((resolveWrite) => {
+        new Promise<void>((resolveWrite, rejectWrite) => {
           this.#terminal.write(data, () => {
-            this.#capture(atMs);
-            resolveWrite();
+            try {
+              this.#capture(atMs);
+              resolveWrite();
+            } catch (error) {
+              rejectWrite(error);
+            }
           });
         }),
     );
@@ -66,7 +72,7 @@ export class TerminalRenderer {
 
   /** Queue a terminal resize after every preceding write. */
   resize(columns: number, rows: number, atMs: number): void {
-    this.#pending = this.#pending.then(() => {
+    this.#queue(() => {
       this.#terminal.resize(columns, rows);
       this.#capture(atMs);
     });
@@ -96,9 +102,17 @@ export class TerminalRenderer {
 
   /** Release addon and terminal resources after all writes settle. */
   async dispose(): Promise<void> {
-    await this.#pending;
-    this.#serializeAddon.dispose();
+    // frames() owns observation failures; cleanup reports only disposal failures.
+    await this.#pending.catch(() => undefined);
+    // xterm owns and disposes every addon loaded through loadAddon().
     this.#terminal.dispose();
+  }
+
+  #queue(operation: () => void | Promise<void>): void {
+    this.#pending = this.#pending.then(operation);
+    // PTY callbacks can fail before capture completion awaits frames(). Keep
+    // the original rejection observable there without an unhandled rejection.
+    void this.#pending.catch(() => undefined);
   }
 
   #capture(atMs: number): void {
@@ -106,13 +120,16 @@ export class TerminalRenderer {
     const lines: string[] = [];
     for (let row = 0; row < this.#terminal.rows; row += 1) {
       const line = buffer.getLine(buffer.viewportY + row);
+      // Trailing blank cells carry no information beyond `columns`; dropping
+      // them keeps sparse screens from costing a full row per blank line.
       lines.push(
-        this.options.normalize(
-          (line?.translateToString(false, 0, this.#terminal.cols) ?? "").padEnd(
-            this.#terminal.cols,
-            " ",
-          ),
-        ),
+        this.options
+          .normalize(
+            (
+              line?.translateToString(false, 0, this.#terminal.cols) ?? ""
+            ).padEnd(this.#terminal.cols, " "),
+          )
+          .replace(TRAILING_SPACES, ""),
       );
     }
     const serializedState = this.options.normalize(

@@ -1,12 +1,15 @@
-import {
-  type ClientConfigurationInspection,
-  type ClientConfigurationResult,
-  type SetupHost,
-  type SetupOptions,
-  type SetupProviderEnvironment,
+import { skillDestinations } from "./SetupSkill.js";
+import type {
+  ClientConfigurationInspection,
+  ClientConfigurationResult,
+  SetupHost,
+  SetupOptions,
+  SetupProviderEnvironment,
 } from "./SetupTypes.js";
 import type { SetupClient } from "./SupportedClients.js";
 import type { SetupHopperInstallResult } from "./SetupInstallFailure.js";
+import { err, ok } from "../domain/result.js";
+import { SetupSkillInstallError } from "./SetupSkill.js";
 import type { DoctorCheck, DoctorReport, DoctorScope } from "./Doctor.js";
 import type { LinuxDistribution } from "./LinuxHopper.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
@@ -18,7 +21,9 @@ import { setupRegistrationCommand } from "./SetupHost.js";
 export class FakeSetupHost implements SetupHost {
   readonly platform: NodeJS.Platform;
   readonly homeDirectory = "/fixture/home";
-  readonly claudeCodeSkillsDirectory = "/fixture/home/.claude/skills";
+  skillDestinations(clientIds: readonly string[]) {
+    return skillDestinations(this.homeDirectory, clientIds);
+  }
   readonly registrationCommand: readonly string[];
   nodeVersion = "24.18.0";
   version: string | undefined = "14.5";
@@ -49,7 +54,7 @@ export class FakeSetupHost implements SetupHost {
 
   constructor(platform: NodeJS.Platform = "darwin") {
     this.platform = platform;
-    this.registrationCommand = setupRegistrationCommand(platform, false);
+    this.registrationCommand = setupRegistrationCommand(platform, undefined);
   }
 
   macosVersion = (): Promise<string | undefined> =>
@@ -119,9 +124,22 @@ export class FakeSetupHost implements SetupHost {
     );
   skillNeedsInstall = (): Promise<boolean> =>
     Promise.resolve(this.skill !== "unchanged");
-  installSkill = (): Promise<"installed" | "unchanged" | "failed"> => {
+  installSkill = () => {
     this.skillInstalls += 1;
-    return Promise.resolve(this.skill);
+    return Promise.resolve(
+      this.skill === "failed"
+        ? err(
+            new SetupSkillInstallError({
+              path: "/fixture/home/.agents/skills/reverse-engineer-anything/SKILL.md",
+              stage: "write",
+              reason: "injected skill write failure",
+              rollbackFailures: [],
+              recoveryBackupPaths: [],
+              cause: new Error("injected skill write failure"),
+            }),
+          )
+        : ok(this.skill),
+    );
   };
   doctor = (scope?: DoctorScope): Promise<DoctorReport> => {
     this.doctorCalls += 1;
@@ -156,6 +174,7 @@ export class FakeSetupHost implements SetupHost {
       scope === undefined
         ? environmentHealthy
         : (scope.clients?.length ?? 0) === 0 &&
+            (scope.skillClients?.length ?? 0) === 0 &&
             (scope.providers?.length ?? 0) === 0 &&
             scope.skill !== true
           ? true
@@ -166,6 +185,9 @@ export class FakeSetupHost implements SetupHost {
       scope: {
         mode: scope === undefined ? "audit-wide" : "explicit",
         clients: scope?.clients ?? [],
+        ...(scope?.skillClients === undefined
+          ? {}
+          : { skill_clients: scope.skillClients }),
         providers: scope?.providers ?? [],
         skill: scope?.skill === true,
         target: null,

@@ -38,7 +38,7 @@ export const compareWebCaptures = (
     dimensions,
     limitations: [
       "A changed status proves an observed difference; an unknown status means absence could not be established from capture completeness.",
-      "Network comparison covers only activity observed after each CDP attachment.",
+      "Network comparison covers only activity observed after each CDP attachment. WebSocket connections with the same URL are compared as an unordered collection of ordered frame streams, retaining connection counts; their individual identities are not stable across captures.",
       "Accessibility roles, ignored state, text, and hierarchy are compared only when the accessibility tree was fully captured and text capture was selected and not truncated.",
       "Storage key inventories are compared only when selected and complete; usage and quota are compared only when reported. Redacted content is compared through complete SHA-256 fingerprints.",
     ],
@@ -238,16 +238,51 @@ const bodyShapesSelected = (inspection: WebPageInspection): boolean =>
       ({ body_shapes }) => body_shapes.status !== "not_approved",
     ));
 
+const webSocketShapesSelected = (inspection: WebPageInspection): boolean =>
+  !inspection.completeness.excluded.some(
+    ({ section, reason }) =>
+      section === "websocket_shapes" && reason === "not_approved",
+  );
+
 const networkIdentity = (
   request: WebPageInspection["network"]["requests"][number],
 ): string =>
   `net_${digestCanonicalValue({ method: request.method, url: request.url, resource_type: request.resource_type })}`;
 
+const networkResponseFields = [
+  "status",
+  "mime_type",
+  "encoded_data_length",
+] as const;
+type NetworkResponseField = (typeof networkResponseFields)[number];
+
+const sharedNetworkResponseFields = (
+  before: WebPageInspection,
+  after: WebPageInspection,
+): ReadonlyMap<string, ReadonlySet<NetworkResponseField>> => {
+  const shared = new Map<string, Set<NetworkResponseField>>();
+  for (const inspection of [before, after])
+    for (const request of inspection.network.requests) {
+      const identity = networkIdentity(request);
+      const fields = shared.get(identity) ?? new Set(networkResponseFields);
+      for (const field of networkResponseFields)
+        if (request[field] === null) fields.delete(field);
+      shared.set(identity, fields);
+    }
+  return shared;
+};
+
 const networkDimension = (
   before: WebPageInspection,
   after: WebPageInspection,
 ): Dimension => {
+  const responseFields = sharedNetworkResponseFields(before, after);
+  const responseFieldsComplete = [...responseFields.values()].every(
+    (fields) => fields.size === networkResponseFields.length,
+  );
   const selected = bodyShapesSelected(before) && bodyShapesSelected(after);
+  const webSocketShapes =
+    webSocketShapesSelected(before) && webSocketShapesSelected(after);
   const sources = new Map<string, BodyShapeSources>();
   if (selected) {
     const observedSources = (inspection: WebPageInspection) => {
@@ -284,29 +319,75 @@ const networkDimension = (
           ({ body_shapes }) => body_shapes.status === "included",
         ),
     );
-  return compareDimension(
-    networkMap(before, sources),
-    networkMap(after, sources),
-    sectionsComplete(before, ["network_requests"]) &&
-      sectionsComplete(after, ["network_requests"]) &&
-      shapesComplete,
-    "Network capture or selected JSON body-shape coverage is attach-window limited, unavailable, or incomplete.",
+  const webSocketShapesComplete =
+    !webSocketShapes ||
+    [before, after].every(
+      (inspection) =>
+        sectionsComplete(inspection, ["websocket_shapes"]) &&
+        inspection.network.websocket_connections.every((connection) =>
+          connection.events.every((event) => event.payload_shape !== null),
+        ),
+    );
+  const webSocketPayloadBytesComplete = [before, after].every((inspection) =>
+    inspection.network.websocket_connections.every((connection) =>
+      connection.events.every((event) => event.payload_bytes !== null),
+    ),
   );
+  const beforeWebSockets = webSocketGroups(before);
+  const afterWebSockets = webSocketGroups(after);
+  const [beforeWebSocketPayload, afterWebSocketPayload] = webSocketPayloadMaps(
+    beforeWebSockets,
+    afterWebSockets,
+    webSocketShapes,
+  );
+  const compared = compareDimension(
+    new Map([
+      ...networkMap(before, sources, responseFields),
+      ...webSocketMetadataMap(beforeWebSockets),
+      ...beforeWebSocketPayload,
+    ]),
+    new Map([
+      ...networkMap(after, sources, responseFields),
+      ...webSocketMetadataMap(afterWebSockets),
+      ...afterWebSocketPayload,
+    ]),
+    [before, after].every((inspection) =>
+      sectionsComplete(inspection, [
+        "network_requests",
+        "websocket_connections",
+        "websocket_frames",
+      ]),
+    ) &&
+      shapesComplete &&
+      webSocketPayloadBytesComplete &&
+      webSocketShapesComplete,
+    "Network capture or selected HTTP/WebSocket payload-shape coverage is attach-window limited, unavailable, or incomplete.",
+  );
+  return compared.status === "unchanged" && !responseFieldsComplete
+    ? {
+        ...compared,
+        status: "unknown",
+        reason:
+          "HTTP response status, MIME type, or byte-count evidence is incomplete.",
+      }
+    : compared;
 };
 
 const networkMap = (
   inspection: WebPageInspection,
   sources: ReadonlyMap<string, BodyShapeSources>,
+  responseFields: ReadonlyMap<string, ReadonlySet<NetworkResponseField>>,
 ): ReadonlyMap<string, string> => {
   const grouped = new Map<string, unknown[]>();
   for (const request of inspection.network.requests) {
     const identity = networkIdentity(request);
     const shapes = sources.get(identity);
     const values = grouped.get(identity) ?? [];
+    const response: Record<string, unknown> = {};
+    for (const field of responseFields.get(identity) ?? [])
+      response[field] = request[field];
     values.push({
-      status: request.status,
-      mime_type: request.mime_type,
-      encoded_data_length: request.encoded_data_length,
+      ...response,
       redirects: (request.redirects ?? []).map(
         ({
           request_timestamp: _requestTimestamp,
@@ -332,6 +413,120 @@ const networkMap = (
       ),
     ]),
   );
+};
+
+type WebSocketGroup = {
+  readonly url: string;
+  readonly stream: string;
+  readonly connections: WebPageInspection["network"]["websocket_connections"];
+};
+
+const webSocketGroups = (
+  inspection: WebPageInspection,
+): ReadonlyMap<string, WebSocketGroup> => {
+  const groups = new Map<string, WebSocketGroup>();
+  for (const connection of inspection.network.websocket_connections) {
+    const stream = digestCanonicalValue(
+      connection.events.map(({ direction, opcode }) => ({
+        direction,
+        opcode,
+      })),
+    );
+    const key = digestCanonicalValue({ url: connection.url, stream });
+    const previous = groups.get(key);
+    if (previous !== undefined) previous.connections.push(connection);
+    else
+      groups.set(key, {
+        url: connection.url,
+        stream,
+        connections: [connection],
+      });
+  }
+  return groups;
+};
+
+const webSocketMetadataMap = (
+  groups: ReadonlyMap<string, WebSocketGroup>,
+): ReadonlyMap<string, string> => {
+  const byUrl = new Map<string, string[]>();
+  for (const group of groups.values()) {
+    const streams = byUrl.get(group.url) ?? [];
+    for (let index = 0; index < group.connections.length; index += 1)
+      streams.push(group.stream);
+    byUrl.set(group.url, streams);
+  }
+  return new Map(
+    [...byUrl].map(([url, streams]) => [
+      `ws_${digestCanonicalValue(url)}`,
+      digestCanonicalValue(streams.sort(compareUnicodeCodePoints)),
+    ]),
+  );
+};
+
+const webSocketPayloadMaps = (
+  beforeGroups: ReadonlyMap<string, WebSocketGroup>,
+  afterGroups: ReadonlyMap<string, WebSocketGroup>,
+  selected: boolean,
+): readonly [ReadonlyMap<string, string>, ReadonlyMap<string, string>] => {
+  const left = new Map<string, string>();
+  const right = new Map<string, string>();
+  for (const [groupKey, beforeGroup] of beforeGroups) {
+    const afterGroup = afterGroups.get(groupKey);
+    if (
+      afterGroup === undefined ||
+      beforeGroup.connections.length !== afterGroup.connections.length
+    )
+      continue;
+    const eventCount = beforeGroup.connections[0]?.events.length ?? 0;
+    const comparableBytes = new Set<number>();
+    const comparableShapes = new Set<number>();
+    for (let index = 0; index < eventCount; index += 1) {
+      if (
+        beforeGroup.connections.every(
+          (connection) => connection.events[index]?.payload_bytes !== null,
+        ) &&
+        afterGroup.connections.every(
+          (connection) => connection.events[index]?.payload_bytes !== null,
+        )
+      )
+        comparableBytes.add(index);
+      // Compare only when every same-metadata connection has shape evidence
+      // on both sides; this avoids assigning an unknown shape to a known one.
+      if (
+        selected &&
+        beforeGroup.connections.every(
+          (connection) => connection.events[index]?.payload_shape !== null,
+        ) &&
+        afterGroup.connections.every(
+          (connection) => connection.events[index]?.payload_shape !== null,
+        )
+      )
+        comparableShapes.add(index);
+    }
+    if (comparableBytes.size === 0 && comparableShapes.size === 0) continue;
+    const project = (group: WebSocketGroup) =>
+      digestCanonicalValue(
+        group.connections
+          .map((connection) =>
+            connection.events.map((event, index) => {
+              const comparablePayload: Record<string, unknown> = {};
+              if (comparableBytes.has(index))
+                comparablePayload.payload_bytes = event.payload_bytes;
+              if (comparableShapes.has(index))
+                comparablePayload.payload_shape = event.payload_shape;
+              return Object.keys(comparablePayload).length === 0
+                ? null
+                : comparablePayload;
+            }),
+          )
+          .map((stream) => digestCanonicalValue(stream))
+          .sort(compareUnicodeCodePoints),
+      );
+    const identity = `wss_${groupKey}`;
+    left.set(identity, project(beforeGroup));
+    right.set(identity, project(afterGroup));
+  }
+  return [left, right];
 };
 
 const webMcpMap = (

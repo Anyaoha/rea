@@ -32,155 +32,267 @@ afterEach(async () => {
   await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
 });
 
-describe("browser CLI parity", () => {
-  it(
-    "returns the same Evidence discovery and inspection contracts",
-    async () => {
-      const browser = await startFakeCdpBrowser({
-        sessionTimeline: "same_origin",
-        webMcpTools: true,
-        sensitiveShapes: true,
-        commandEvents: partialScriptEvents,
-      });
-      browsers.push(browser);
-      const listed = await runCli(
-        ["list-browser-targets", browser.endpoint, "--json"],
-        process.env,
-      );
-      expect(listed).toMatchObject({
-        operation: "list_browser_targets",
-        provider: { id: "rea-cdp-browser" },
-        normalized_result: {
-          targets: expect.arrayContaining([
-            expect.objectContaining({ target_id: "allowed-page" }),
-            expect.objectContaining({ target_id: "disallowed-page" }),
-          ]),
+it(
+  "browser CLI parity returns the same Evidence discovery and inspection contracts",
+  async () => {
+    const browser = await startFakeCdpBrowser({
+      sessionTimeline: "same_origin",
+      webMcpTools: true,
+      sensitiveShapes: true,
+      commandEvents: partialScriptEvents,
+      eventsBeforeReply: ["Network.enable"],
+    });
+    browsers.push(browser);
+    const listed = await runCli(
+      ["list-browser-targets", browser.endpoint, "--json"],
+      process.env,
+    );
+    expect(listed).toMatchObject({
+      operation: "list_browser_targets",
+      provider: { id: "rea-cdp-browser" },
+      normalized_result: {
+        targets: expect.arrayContaining([
+          expect.objectContaining({ target_id: "allowed-page" }),
+          expect.objectContaining({ target_id: "disallowed-page" }),
+        ]),
+      },
+    });
+    const inspected = await runCli(
+      [
+        "inspect-web-page",
+        browser.endpoint,
+        "allowed-page",
+        "--observation-ms",
+        "0",
+        "--include-console-text",
+        "--include-json-body-shapes",
+        "--include-websocket-shapes",
+        "--json",
+      ],
+      process.env,
+    );
+    expect(inspected).toMatchObject({
+      operation: "inspect_web_page",
+      provider: { id: "rea-cdp-browser" },
+      normalized_result: {
+        target: { target_id: "allowed-page" },
+        scripts: {
+          items: [{ cdp_hash: null, length: null, is_module: null }],
         },
-      });
-      const inspected = await runCli(
-        [
-          "inspect-web-page",
-          browser.endpoint,
-          "allowed-page",
-          "--observation-ms",
-          "0",
-          "--include-console-text",
-          "--include-json-body-shapes",
-          "--include-websocket-shapes",
-          "--json",
-        ],
-        process.env,
-      );
-      expect(inspected).toMatchObject({
-        operation: "inspect_web_page",
-        provider: { id: "rea-cdp-browser" },
-        normalized_result: {
-          target: { target_id: "allowed-page" },
-          scripts: {
-            items: [{ cdp_hash: null, length: null, is_module: null }],
-          },
-          network: {
-            prior_activity_available: false,
-            requests: [
-              expect.objectContaining({
-                body_shapes: expect.objectContaining({ status: "included" }),
-              }),
-            ],
-          },
+        network: {
+          prior_activity_available: false,
+          requests: [
+            expect.objectContaining({
+              body_shapes: expect.objectContaining({ status: "included" }),
+            }),
+          ],
         },
-      });
-      const inspection = normalizedResult(inspected);
-      const compared = await runCli(
-        [
-          "compare-web-captures",
-          JSON.stringify({ inspection }),
-          JSON.stringify({ inspection }),
-          "--json",
-        ],
-        process.env,
-      );
-      expect(compared).toMatchObject({
-        operation: "compare_web_captures",
-        normalized_result: {
-          overall_status: "unknown",
-          dimensions: {
-            network: { status: "unknown", total_changes: 0 },
-          },
+      },
+    });
+    const inspection = normalizedResult(inspected);
+    const compared = await runCli(
+      [
+        "compare-web-captures",
+        JSON.stringify({ inspection, scenario: { caller_metadata: true } }),
+        JSON.stringify({ inspection }),
+        "--json",
+      ],
+      process.env,
+    );
+    expect(compared).toMatchObject({
+      operation: "compare_web_captures",
+      normalized_result: {
+        overall_status: "unknown",
+        dimensions: {
+          network: { status: "unknown", total_changes: 0 },
         },
-      });
-      const scenarioCapture = completeScenarioCapture();
-      const scenarioCompared = await runCli(
-        [
-          "compare-web-captures",
-          JSON.stringify(scenarioCapture),
-          JSON.stringify(scenarioCapture),
-          "--normalization-json",
-          '{"rules":[]}',
-          "--json",
-        ],
-        process.env,
-      );
-      expect(scenarioCompared).toMatchObject({
-        operation: "compare_web_captures",
-        normalized_result: {
-          comparison_kind: "browser_scenario",
-          overall_status: "unchanged",
-          alignment: { status: "aligned", aligned_steps: 2 },
-        },
-      });
-      const intentionalPolicy = await runCli(
-        [
-          "compare-web-captures",
-          JSON.stringify(scenarioCapture),
-          JSON.stringify(scenarioCapture),
-          "--normalization-json",
-          JSON.stringify({
-            rules: [
-              {
-                rule_id: "domain",
-                artifacts: ["url"],
-                match: "app.example.test",
-                replacement: "normalized.test",
-              },
-            ],
-          }),
-          "--json",
-        ],
-        process.env,
-      );
-      expect(intentionalPolicy).toMatchObject({
-        normalized_result: {
-          normalization: { rules: [{ rule_id: "domain" }] },
-        },
-      });
+      },
+    });
+    const scenarioCapture = completeScenarioCapture();
+    const scenarioCompared = await runCli(
+      [
+        "compare-web-captures",
+        JSON.stringify(scenarioCapture),
+        JSON.stringify(scenarioCapture),
+        "--normalization-json",
+        '{"rules":[]}',
+        "--json",
+      ],
+      process.env,
+    );
+    expect(scenarioCompared).toMatchObject({
+      operation: "compare_web_captures",
+      normalized_result: {
+        comparison_kind: "browser_scenario",
+        overall_status: "unchanged",
+        alignment: { status: "aligned", aligned_steps: 2 },
+      },
+    });
+    const intentionalPolicy = await runCli(
+      [
+        "compare-web-captures",
+        JSON.stringify(scenarioCapture),
+        JSON.stringify(scenarioCapture),
+        "--normalization-json",
+        JSON.stringify({
+          rules: [
+            {
+              rule_id: "domain",
+              artifacts: ["url"],
+              match: "app.example.test",
+              replacement: "normalized.test",
+            },
+          ],
+        }),
+        "--json",
+      ],
+      process.env,
+    );
+    expect(intentionalPolicy).toMatchObject({
+      normalized_result: {
+        normalization: { rules: [{ rule_id: "domain" }] },
+      },
+    });
 
-      const malformedPolicy = await runCli(
-        [
-          "compare-web-captures",
-          JSON.stringify(scenarioCapture),
-          JSON.stringify(scenarioCapture),
-          "--normalization-json",
-          "{invalid-policy",
-          "--json",
+    const malformedPolicy = await runCli(
+      [
+        "compare-web-captures",
+        JSON.stringify(scenarioCapture),
+        JSON.stringify(scenarioCapture),
+        "--normalization-json",
+        "{invalid-policy",
+        "--json",
+      ],
+      process.env,
+    );
+    expect(malformedPolicy).toMatchObject({
+      error: "Browser observation failed",
+      code: "invalid_request",
+      details: {
+        operation: "compare_web_captures",
+        issues: [
+          {
+            path: ["normalization"],
+            reason: "invalid_format",
+            expected: "JSON",
+          },
         ],
-        process.env,
+      },
+    });
+  },
+  INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+describe("scenario comparison CLI diagnostics", () => {
+  const rule = {
+    rule_id: "domain",
+    artifacts: ["url"],
+    match: "app.example.test",
+    replacement: "normalized.test",
+  };
+  it.each([
+    {
+      name: "duplicate rule IDs",
+      normalization: { rules: [rule, rule] },
+      issue: {
+        path: ["normalization", "rules", 1, "rule_id"],
+        reason: "invalid_value",
+        message: "Normalization rule IDs must be unique",
+      },
+    },
+    {
+      name: "duplicate artifact kinds",
+      normalization: { rules: [{ ...rule, artifacts: ["url", "url"] }] },
+      issue: {
+        path: ["normalization", "rules", 0, "artifacts"],
+        reason: "invalid_value",
+        message: "Normalization rule artifact kinds must be unique",
+      },
+    },
+    {
+      name: "structurally invalid rules",
+      normalization: { rules: "invalid" },
+      issue: {
+        path: ["normalization", "rules"],
+        reason: "invalid_type",
+        expected: "array",
+      },
+    },
+  ])(
+    "retains scenario normalization diagnostics for $name",
+    async ({ normalization, issue }) => {
+      const capture = JSON.stringify(completeScenarioCapture());
+      const result = await runCli([
+        "compare-web-captures",
+        capture,
+        capture,
+        "--normalization-json",
+        JSON.stringify(normalization),
+        "--json",
+      ]);
+      expect(result).toMatchObject({
+        code: "invalid_request",
+        details: { operation: "compare_web_captures", issues: [issue] },
+      });
+    },
+  );
+
+  it("keeps malformed scenario diagnostics in the selected capture group", async () => {
+    const capture = completeScenarioCapture();
+    const result = await runCli([
+      "compare-web-captures",
+      JSON.stringify({ ...capture, duration_ms: "invalid" }),
+      JSON.stringify(capture),
+      "--json",
+    ]);
+    expect(result).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "compare_web_captures",
+        issues: [
+          {
+            path: ["before_scenario", "duration_ms"],
+            reason: "invalid_type",
+            expected: "number",
+          },
+        ],
+      },
+    });
+  });
+
+  it.each(["omitted", "misspelled"])(
+    "reports the missing scenario manifest when it is %s on both captures",
+    async (kind) => {
+      const { scenario, ...capture } = completeScenarioCapture();
+      const input = JSON.stringify(
+        kind === "omitted" ? capture : { ...capture, scneario: scenario },
       );
-      expect(malformedPolicy).toMatchObject({
-        error: "Browser observation failed",
+      const result = await runCli([
+        "compare-web-captures",
+        input,
+        input,
+        "--json",
+      ]);
+      expect(result).toMatchObject({
         code: "invalid_request",
         details: {
           operation: "compare_web_captures",
-          issues: [
+          issues: expect.arrayContaining([
             {
-              path: ["normalization"],
-              reason: "invalid_format",
-              expected: "JSON",
+              path: ["before_scenario", "scenario"],
+              reason: "missing_argument",
+              expected: "object",
             },
-          ],
+            {
+              path: ["after_scenario", "scenario"],
+              reason: "missing_argument",
+              expected: "object",
+            },
+          ]),
         },
       });
+      expect(JSON.stringify(result)).not.toContain('"inspection"');
     },
-    INTEGRATION_TEST_TIMEOUT_MS,
   );
 });
 
@@ -353,6 +465,7 @@ const completeScenarioCapture = () => {
         response_body: false,
         header_values: false,
       },
+      event_families: [],
     },
     duration_ms: 1,
     steps: [

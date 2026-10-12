@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import {
   chmod,
   mkdir,
@@ -16,6 +16,19 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execFileAsync = promisify(execFile);
+
+// install.sh:fail_node_version emits this recovery block verbatim. The fake
+// `uname` in createFixture reports `x86_64` / `Linux`, so the host labels
+// resolve to `linux/x64`.
+const UNSUPPORTED_NODE_RECOVERY_LINUX_X64 =
+  "REA installation failed: Node.js 20.0.0 is unsupported.\n" +
+  "\n" +
+  "REA requires Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+. Install one via:\n" +
+  "  nvm:  nvm install 24 && nvm use 24      (https://github.com/nvm-sh/nvm)\n" +
+  "  fnm:  fnm install 24 && fnm use 24      (https://github.com/Schniz/fnm)\n" +
+  "  Direct download for linux/x64:\n" +
+  "    https://nodejs.org/dist/latest-v24.x/  (grab the linux-x64 tarball)\n" +
+  "Then rerun this installer.\n";
 
 describe("curl installer scenarios", { timeout: 20_000 }, () => {
   it("installs only a pinned REA CLI with closed stdin", async () => {
@@ -87,7 +100,7 @@ describe("curl installer scenarios", { timeout: 20_000 }, () => {
       "unsupported Node",
       ["--version", "0.3.0"],
       { FAKE_NODE_VERSION: "20.0.0" },
-      "REA installation failed: Node.js 20.0.0 is unsupported; use Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+.\n",
+      UNSUPPORTED_NODE_RECOVERY_LINUX_X64,
     ],
     [
       "unreadable Node version",
@@ -172,6 +185,135 @@ describe("curl installer scenarios", { timeout: 20_000 }, () => {
   });
 });
 
+describe("truncated installer download", { timeout: 20_000 }, () => {
+  it("runs nothing from a download truncated after the npm install line", async () => {
+    const fixture = await createFixture();
+    const source = await readFile(join(process.cwd(), "install.sh"), "utf8");
+    const installLine = source.indexOf('npm "${install_args[@]}" ||');
+    expect(installLine).toBeGreaterThan(0);
+    const truncated = join(fixture.home, "..", "install-truncated.sh");
+    await writeFile(
+      truncated,
+      source.slice(0, source.indexOf("\n", installLine) + 1),
+    );
+    const failure: unknown = await runInstaller(
+      fixture,
+      ["--version", "0.3.0", "--no-setup"],
+      {},
+      truncated,
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect(getProcessOutput(failure, "stdout")).toBe("");
+    expect(getProcessOutput(failure, "stderr")).toContain("syntax error");
+    await expect(readFile(fixture.npmLog, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+});
+
+describe(
+  "installer download truncated at any byte",
+  {
+    timeout: 180_000,
+  },
+  () => {
+    // Every prefix of the script, from the empty download to the full file, as
+    // `curl ... | bash -s -- --dry-run` would see it. Covers the preamble (a
+    // cut right after `set` would print every shell variable), the body, and
+    // the final invocation (a cut right after `main` would drop the flags).
+    it("runs nothing and prints nothing until the closing brace arrives", async () => {
+      const source = await readFile(join(process.cwd(), "install.sh"));
+      expect(source.subarray(0, 14).toString()).toBe("#!/bin/bash\n{\n");
+      const groupOpen = source.indexOf("\n{\n") + 2;
+      const groupEnd = source.lastIndexOf("\n}\n") + 2;
+      expect(groupEnd).toBe(source.length - 1);
+      expect(source.subarray(groupOpen, groupEnd).toString()).toContain(
+        "set -euo pipefail",
+      );
+      const fixture = await createFixture();
+      const offsets = Array.from(
+        { length: source.length + 1 },
+        (_, offset) => offset,
+      );
+      const failures: string[] = [];
+      const check = async (offset: number): Promise<void> => {
+        const result = await runPipedInstaller(
+          fixture,
+          source.subarray(0, offset),
+          ["--dry-run"],
+          { SECRET_TOKEN: "inherited-secret" },
+        );
+        const context = `truncated at byte ${offset} after ${JSON.stringify(
+          source.subarray(Math.max(0, offset - 24), offset).toString(),
+        )}`;
+        if (offset >= groupEnd) {
+          if (result.code !== 0 || !result.stdout.includes("no changes made"))
+            failures.push(`${context}: complete script did not dry-run`);
+          return;
+        }
+        if (result.stdout !== "")
+          failures.push(`${context}: stdout ${JSON.stringify(result.stdout)}`);
+        if (offset >= groupOpen) {
+          if (result.code === 0) failures.push(`${context}: exit code 0`);
+          if (!/syntax error|unexpected EOF/u.test(result.stderr))
+            failures.push(
+              `${context}: stderr ${JSON.stringify(result.stderr)}`,
+            );
+        } else if (result.code !== 0 || result.stderr !== "")
+          failures.push(`${context}: preamble did not exit quietly`);
+      };
+      for (let index = 0; index < offsets.length; index += 16)
+        await Promise.all(offsets.slice(index, index + 16).map(check));
+      expect(failures).toEqual([]);
+      await expect(readFile(fixture.npmLog, "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(readFile(fixture.reaLog, "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    });
+  },
+);
+
+describe("Linux user-prefix installer", { timeout: 20_000 }, () => {
+  it("prints the executed arguments as a reusable command with shell metacharacters", async () => {
+    const fixture = await createFixture();
+    const home = join(fixture.home, "home with 'quotes' $cash; [glob]");
+    const argvLog = join(fixture.home, "npm-argv.log");
+    const overrides = { HOME: home, FAKE_NPM_ARGV_LOG: argvLog };
+    const plan = await runInstaller(
+      fixture,
+      ["--version", "0.3.0", "--dry-run"],
+      overrides,
+    );
+    await expect(readFile(argvLog)).rejects.toMatchObject({ code: "ENOENT" });
+    const command = /^  Command: (.+)$/mu.exec(plan.stdout)?.[1];
+    expect(command).toBeDefined();
+    const printed = await execFileAsync("/bin/bash", [
+      "-c",
+      `npm() { printf '%s\\0' "$@"; }\n${command}`,
+    ]);
+    const installed = await runInstaller(
+      fixture,
+      ["--version", "0.3.0"],
+      overrides,
+    );
+    expect(installed.stdout).toContain(`  Command: ${command}\n`);
+    expect(printed.stdout.split("\0")).toEqual([
+      "install",
+      "--global",
+      "--prefix",
+      join(home, ".local"),
+      "rea-agents@0.3.0",
+      "",
+    ]);
+    expect((await readFile(argvLog)).toString()).toBe(printed.stdout);
+  });
+});
+
 describe("native macOS installer", { timeout: 20_000 }, () => {
   it("installs on Darwin with an empty prefix argument array", async () => {
     const fixture = await createFixture();
@@ -179,6 +321,9 @@ describe("native macOS installer", { timeout: 20_000 }, () => {
       FAKE_PLATFORM: "Darwin",
       FAKE_NPM_PREFIX: join(fixture.home, "npm global prefix"),
     });
+    expect(result.stdout).toContain(
+      "  Command: npm install --global rea-agents@0.3.0\n",
+    );
     expect(result.stdout).toContain("REA 0.3.0 is installed");
     expect(await readFile(fixture.npmLog, "utf8")).toBe(
       "prefix --global\ninstall --global rea-agents@0.3.0\n",
@@ -189,13 +334,18 @@ describe("native macOS installer", { timeout: 20_000 }, () => {
 });
 
 describe("installer semantic version parsing", { timeout: 20_000 }, () => {
-  it.each(["1.2.3-01"])(
+  it.each([
+    "1.2.3-01",
+    "1.2.3-$(printf unexpected)",
+    '1.2.3-"; printf unexpected; #',
+  ])(
     "rejects malformed semantic versions before invoking npm: %s",
     async (version) => {
       const fixture = await createFixture();
       await expect(
         runInstaller(fixture, ["--version", version, "--dry-run"]),
       ).rejects.toMatchObject({
+        stdout: "",
         stderr:
           "REA installation failed: version must be an exact semantic version.\n",
       });
@@ -322,6 +472,7 @@ if [ "$1" = "-p" ]; then printf '%s\n' "\${FAKE_NODE_VERSION:-24.18.0}"; else ex
       join(bin, "npm"),
       `#!/bin/sh
 printf '%s\n' "$*" >> "$FAKE_NPM_LOG"
+if [ -n "\${FAKE_NPM_ARGV_LOG:-}" ]; then printf '%s\\0' "$@" > "$FAKE_NPM_ARGV_LOG"; fi
 [ "$1" = "prefix" ] && { [ "\${FAKE_NPM_PREFIX_FAIL:-}" = "1" ] && exit 1; printf '%s\n' "$FAKE_NPM_PREFIX"; exit 0; }
 [ "\${FAKE_NPM_FAIL:-}" = "1" ] && exit 1
 prefix="$HOME/.local"
@@ -368,8 +519,9 @@ const runInstaller = async (
   fixture: InstallerFixture,
   args: readonly string[] = [],
   overrides: Readonly<Record<string, string>> = {},
+  script = join(process.cwd(), "install.sh"),
 ): Promise<{ readonly stdout: string; readonly stderr: string }> =>
-  execFileAsync("/bin/bash", [join(process.cwd(), "install.sh"), ...args], {
+  execFileAsync("/bin/bash", [script, ...args], {
     env: {
       ...process.env,
       HOME: fixture.home,
@@ -381,6 +533,47 @@ const runInstaller = async (
       FAKE_NPM_PREFIX: join(fixture.home, ".npm-global"),
       ...overrides,
     },
+  });
+
+/**
+ * Run the installer as `curl ... | bash -s -- ARGS` does: source on stdin.
+ * The environment is minimal and does not inherit the test runner's.
+ */
+const runPipedInstaller = async (
+  fixture: InstallerFixture,
+  source: Uint8Array,
+  args: readonly string[],
+  overrides: Readonly<Record<string, string>> = {},
+): Promise<{
+  readonly code: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}> =>
+  new Promise((resolve, reject) => {
+    const child = spawn("/bin/bash", ["-s", "--", ...args], {
+      env: {
+        HOME: fixture.home,
+        TMPDIR: fixture.temporary,
+        PATH: `${fixture.bin}:/usr/bin:/bin`,
+        FAKE_NPM_LOG: fixture.npmLog,
+        FAKE_REA_LOG: fixture.reaLog,
+        FAKE_REA_SOURCE: join(fixture.bin, "rea-source"),
+        FAKE_NPM_PREFIX: join(fixture.home, ".npm-global"),
+        ...overrides,
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+    child.stdin.end(source);
   });
 
 const shellQuote = (value: string): string =>

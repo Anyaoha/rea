@@ -1,3 +1,7 @@
+import {
+  attachManagedDecodeBudget,
+  ManagedDecodeBudget,
+} from "./ManagedDecodeBudget.js";
 import { managedFailure } from "./ManagedReaderFailure.js";
 import {
   computeRowSize,
@@ -131,7 +135,7 @@ const requireRange = (
     );
 };
 
-const align4 = (value: number): number => (value + 3) & ~3;
+const align4 = (value: number): number => Math.ceil(value / 4) * 4;
 
 const readStreamName = (
   bytes: Buffer,
@@ -208,6 +212,7 @@ interface ParsedStreams {
 const readMetadataStreams = (
   bytes: Buffer,
   rootOffset: number,
+  budget: ManagedDecodeBudget,
 ): ParsedStreams => {
   if (bytes.readUInt32LE(0) !== 0x424a_5342)
     throw managedFailure(
@@ -220,8 +225,10 @@ const readMetadataStreams = (
   requireRange(bytes, 16, versionLength, "metadata.version");
   const versionBytes = bytes.subarray(16, 16 + versionLength);
   const zero = versionBytes.indexOf(0);
+  const decodedVersionLength = zero < 0 ? versionBytes.length : zero;
+  budget.reserveString(decodedVersionLength, rootOffset + 16);
   const version = versionBytes
-    .subarray(0, zero < 0 ? versionBytes.length : zero)
+    .subarray(0, decodedVersionLength)
     .toString("utf8");
   let cursor = align4(16 + versionLength);
   requireRange(bytes, cursor, 4, "metadata.stream-count");
@@ -351,6 +358,18 @@ const buildMetadataTables = ({
     if ((valid & (1n << BigInt(index))) === 0n) continue;
     tableCursor += 4;
   }
+  // CLR readers honor an optional extra-data word after the row counts.
+  // Its value is opaque; it is not a length or part of the first table row.
+  if (((tableBytes[6] ?? 0) & 0x40) !== 0) {
+    if (tableCursor > tableBytes.length - 4)
+      throw managedFailure(
+        "invalid-metadata-root",
+        "metadata.tables-extra-data",
+        "Metadata tables extra-data word is truncated",
+        tablesOffset + tableCursor,
+      );
+    tableCursor += 4;
+  }
   for (let index = 0; index < METADATA_TABLE_NAMES.length; index += 1) {
     const count = rowCounts[index] ?? 0;
     if ((valid & (1n << BigInt(index))) === 0n) continue;
@@ -390,7 +409,8 @@ export const readManagedMetadataLayout = (
       rootOffset,
     );
   const bytes = artifact.subarray(rootOffset, rootOffset + size);
-  const { streams, version } = readMetadataStreams(bytes, rootOffset);
+  const budget = new ManagedDecodeBudget();
+  const { streams, version } = readMetadataStreams(bytes, rootOffset, budget);
   const { tableBytes, tablesOffset, heaps, valid } = readTablesHeader(
     artifact,
     streams,
@@ -403,7 +423,7 @@ export const readManagedMetadataLayout = (
     valid,
     tablesOffset,
   });
-  return {
+  const layout: ManagedMetadataLayout = {
     rootOffset,
     size,
     version,
@@ -420,6 +440,8 @@ export const readManagedMetadataLayout = (
     tableIndexSize: (index) => tableSize(index, rowCounts),
     codedIndexSize: (name) => codedSize(name, rowCounts),
   };
+  attachManagedDecodeBudget(layout, budget);
+  return layout;
 };
 
 /** Resolve a one-based metadata row to its exact file offset. */

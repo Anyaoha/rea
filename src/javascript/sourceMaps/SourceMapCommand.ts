@@ -8,10 +8,12 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { WEB_SOURCE_MAP_LIMITS } from "../../domain/webSourceLocation.js";
 import {
@@ -19,6 +21,7 @@ import {
   PrivateRuntimeRootUnavailableError,
 } from "../../process/PrivateRuntimeRoot.js";
 import { ProviderStartupDeadline } from "../../process/ProviderDeadline.js";
+import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { cleanupOwnedProcessGroup } from "../../process/ProcessOwnership.js";
 import {
   ProviderProcessSupervisor,
@@ -30,6 +33,9 @@ import { prepareProcessOwnershipInspection } from "../../process/ProcessOwnershi
 
 const OPERATION = "trace_web_source_location";
 const PROVIDER = "source-map-decoder";
+/** Process commit limit enforced on the codec; null where V8 heap flags apply. */
+export const SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES =
+  javaScriptWorkerMemoryLimitBytes(WEB_SOURCE_MAP_LIMITS.codecHeapMiB);
 /** Launcher seam retains the actual codec protocol and ownership supervisor. */
 export type SourceMapCodecLauncher = (
   options: OwnedProviderProcessSpawnOptions,
@@ -46,6 +52,22 @@ export interface SourceMapDecoderDependencies {
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   /** Prepare host ownership inspection outside the codec execution deadline. */
   readonly prepareOwnership?: (signal?: AbortSignal) => Promise<void>;
+}
+
+export interface SourceMapCleanupOwner {
+  close(
+    previousError: string | null,
+  ): Promise<ProviderCleanupError | undefined>;
+}
+
+export class SourceMapCleanupFailure extends ProviderCleanupError {
+  constructor(
+    readonly cleanupOwner: SourceMapCleanupOwner,
+    resources: readonly string[],
+    diagnostics: Readonly<Record<string, JsonValue>>,
+  ) {
+    super(PROVIDER, resources, diagnostics, { operation: OPERATION });
+  }
 }
 
 /** Run a trusted codec command and release its process/root before returning output. */
@@ -94,7 +116,7 @@ export const runSourceMapCommand = async (
     : result;
 };
 
-class OwnedCodec {
+class OwnedCodec implements SourceMapCleanupOwner {
   readonly #runId = `rea-source-map-${randomUUID()}`;
   #runtime: SourceMapCodecRuntime | undefined;
   #supervisor: ProviderProcessSupervisor | undefined;
@@ -130,7 +152,7 @@ class OwnedCodec {
     )({
       command: process.execPath,
       arguments: [
-        "--max-old-space-size=192",
+        `--max-old-space-size=${String(WEB_SOURCE_MAP_LIMITS.codecHeapMiB)}`,
         "--max-semi-space-size=8",
         "--v8-pool-size=1",
         "--single-threaded",
@@ -141,6 +163,9 @@ class OwnedCodec {
       runId: this.#runId,
       cwd: this.#runtime.path,
       hostEnvironment: environment,
+      ...(SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES === null
+        ? {}
+        : { memoryLimitBytes: SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES }),
       signal: this.deadline.signal,
     });
     this.#supervisor = new ProviderProcessSupervisor(
@@ -174,6 +199,23 @@ class OwnedCodec {
     while (!(await supervisor.waitForOutputClose(50))) this.check();
     this.check();
     const snapshot = supervisor.snapshot();
+    // No partial codec result exists; a reached limit fails the whole trace.
+    if (snapshot.memoryLimitReached === true)
+      throw new AnalysisResourceConstraintError(
+        OPERATION,
+        "memory",
+        `Source-map codec reached its ${SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES === null ? "" : `${String(SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES)}-byte `}process memory limit for ${this.path}; no partial evidence was returned.`,
+        {
+          codec_process_memory_limit_bytes: SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
+        },
+        {
+          capturedOutput: {
+            stdout: "",
+            stderr: snapshot.stderr.text,
+            truncated: snapshot.diagnosticTruncated ?? false,
+          },
+        },
+      );
     if (snapshot.exitCode !== 0 || snapshot.signal !== null)
       throw new ProviderAdapterError(PROVIDER, OPERATION, {
         diagnostics: {
@@ -231,21 +273,27 @@ class OwnedCodec {
     previousError: string | null,
   ): Promise<ProviderCleanupError | undefined> {
     const failures: string[] = [];
+    let processReleased = this.#supervisor === undefined;
     if (this.#supervisor !== undefined) {
       const stopped = await this.#supervisor.stop();
       if (stopped.status === "incomplete") failures.push(stopped.reason);
+      else {
+        processReleased = true;
+        this.#supervisor = undefined;
+      }
     }
-    if (this.#runtime !== undefined) {
+    if (processReleased && this.#runtime !== undefined) {
       try {
         await this.#runtime.close();
+        this.#runtime = undefined;
       } catch (cause: unknown) {
         failures.push(message(cause));
       }
     }
     return failures.length === 0
       ? undefined
-      : new ProviderCleanupError(
-          PROVIDER,
+      : new SourceMapCleanupFailure(
+          this,
           [
             this.#runId,
             ...(this.#runtime === undefined ? [] : [this.#runtime.path]),
@@ -256,7 +304,6 @@ class OwnedCodec {
             previous_error: previousError,
             codec_pid: this.#supervisor?.launch.process.pid ?? null,
           },
-          { operation: OPERATION },
         );
   }
 }

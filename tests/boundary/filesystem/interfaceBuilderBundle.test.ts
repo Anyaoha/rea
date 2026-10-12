@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -10,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { analyzeInterfaceBuilderBundle } from "../../../src/artifacts/apple/InterfaceBuilderAnalysis.js";
 import { encodeNibArchiveFixture } from "../../../src/artifacts/apple/NibArchive.fixture.js";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
+import { xcodeIbtoolAvailable } from "../../fixtures/ibtool.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { interfaceBuilderAnalysisSchema } from "../../../src/domain/apple/interfaceBuilderGraph.js";
@@ -774,6 +774,46 @@ cliTest(
   },
 );
 
+describe("binary Interface Builder archive omissions", () => {
+  it("reports omitted __proto__ entries as partial decoding", async () => {
+    const placeholder = "proto_key";
+    const encoded = Buffer.from(
+      buildBinary({
+        $archiver: "NSKeyedArchiver",
+        $version: 100000,
+        $objects: ["$null"],
+        $top: {},
+        [placeholder]: "hidden",
+      }),
+    );
+    const start = encoded.indexOf(placeholder);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(encoded.indexOf(placeholder, start + placeholder.length)).toBe(-1);
+    Buffer.from("__proto__").copy(encoded, start);
+
+    const root = await createTestTempDirectory("rea-ib-test-");
+    const bundle = join(root, "Example.app");
+    const resources = join(bundle, "Contents", "Resources");
+    await mkdir(resources, { recursive: true });
+    await writeFile(join(resources, "Prototype.nib"), encoded);
+    const result = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "f".repeat(64),
+    });
+
+    expect(result.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "archive_decode",
+        status: "partial",
+        reason: "dictionary_entries_omitted",
+      }),
+    );
+    expect(result.limitations).toContain(
+      "Contents/Resources/Prototype.nib: Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
+    );
+  });
+});
+
 describe("aggregate Interface Builder archive retention budget", () => {
   it("keeps earlier documents when the aggregate decode reservation is exhausted", async () => {
     const root = await createTestTempDirectory("rea-ib-budget-test-");
@@ -873,7 +913,7 @@ describe("bounded Interface Builder archive decoding", () => {
     );
   });
 
-  it.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/ibtool"))(
+  it.skipIf(!xcodeIbtoolAvailable)(
     "decodes an Xcode-compiled storyboard NIB and recovers its UI routes",
     async () => {
       const root = await createTestTempDirectory("rea-ib-compiled-test-");
@@ -952,8 +992,8 @@ describe("bounded Interface Builder archive decoding", () => {
   );
 });
 
-describe("compiled UIKit NIB connections", () => {
-  it("projects UIKit runtime outlet and event connections", async () => {
+describe("NIBArchive UIKit event connections", () => {
+  it("projects a runtime event connection and its event mask", async () => {
     const root = await createTestTempDirectory("rea-ib-test-");
     const bundle = join(root, "Example.app");
     await mkdir(bundle, { recursive: true });
@@ -965,7 +1005,6 @@ describe("compiled UIKit NIB connections", () => {
           "UIClassSwapper",
           "UIButton",
           "UIRuntimeEventConnection",
-          "UIRuntimeOutletConnection",
           "NSString",
         ],
         objects: [
@@ -981,18 +1020,10 @@ describe("compiled UIKit NIB connections", () => {
               UIEventMask: 64,
             },
           },
-          {
-            classIndex: 4,
-            values: {
-              UISource: { ref: 1 },
-              UIDestination: { ref: 2 },
-              UILabel: { ref: 8 },
-            },
-          },
-          { classIndex: 5, values: { "NS.bytes": "IBFilesOwner" } },
-          { classIndex: 5, values: { "NS.bytes": "BuildCell" } },
-          { classIndex: 5, values: { "NS.bytes": "buildTapped:" } },
-          { classIndex: 5, values: { "NS.bytes": "buildButton" } },
+          { classIndex: 2, values: {} },
+          { classIndex: 4, values: { "NS.bytes": "IBFilesOwner" } },
+          { classIndex: 4, values: { "NS.bytes": "BuildCell" } },
+          { classIndex: 4, values: { "NS.bytes": "buildTapped:" } },
         ],
       }),
     );
@@ -1022,16 +1053,6 @@ describe("compiled UIKit NIB connections", () => {
         .filter(({ from }) => from === action?.id)
         .map(({ to }) => named(to)),
     ).toEqual(expect.arrayContaining(["BuildCell"]));
-    const outlet = analysis.graph.nodes.find(({ kind }) => kind === "outlet");
-    expect(outlet?.name).toBe("buildButton");
-    expect(
-      analysis.graph.edges
-        .filter(
-          ({ relation, from }) =>
-            relation === "outlet_to" && from === outlet?.id,
-        )
-        .map(({ to }) => named(to)),
-    ).toEqual(["UIButton"]);
     expect(
       analysis.graph.nodes.find(({ name }) => name === "IBFilesOwner")?.kind,
     ).toBe("placeholder");

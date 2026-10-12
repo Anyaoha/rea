@@ -1,6 +1,6 @@
 <div align="center">
 
-[English](README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · **日本語** · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md)
+[English](README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · **日本語** · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
 
 # REA：あらゆるものをリバースエンジニアリング
 
@@ -9,7 +9,6 @@
 **気に入った機能を見つけたら、その仕組みをバイナリのレベルまで理解する。**
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](docs/mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
@@ -18,7 +17,7 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
-**[ウェブサイト](https://rea.tools/) · [ガイド](https://rea.tools/guides/) · [事例](https://rea.tools/showcase/)**
+**[ウェブサイト](https://rea.tools/ja/) · [ガイド](https://rea.tools/ja/guides/) · [事例](https://rea.tools/ja/showcase/)**
 
 [クイックスタート](#クイックスタート) · [REA の仕組み](#rea-の仕組み) · [分析できる対象](#分析できる対象) · [事例](#事例) · [よくある質問](#よくある質問) · [ドキュメント](#ドキュメント)
 
@@ -54,7 +53,7 @@ REA はエージェントを分析ツールにつなぎ、ネイティブバイ�
 
 セットアップはエージェントに REA を登録し、対応するワークフローの手順をインストールします。ネイティブ分析には既存の Hopper または Ghidra を使えます。承認すれば、セットアップで Hopper をインストールすることもできます。静的な JavaScript 分析には、どちらのエンジンも必要ありません。
 
-> **[REA のウェブサイト](https://rea.tools/)**で、セットアップ手順、図解ガイド、実際の事例を確認できます。
+> **[REA のウェブサイト](https://rea.tools/ja/)**で、セットアップ手順、図解ガイド、実際の事例を確認できます。
 
 ## クイックスタート
 
@@ -131,20 +130,26 @@ npx rea-agents@latest setup
 
 REA には Node.js 22.x（>=22.19）、24.x（>=24.11）、または 26+ と npm が必要です。追加のツールや対応ホストは、対象によって異なります。
 
-| 対象                             | REA が返すもの                                                                         | 要件とガイド                                                                                                                                       |
-| -------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ネイティブバイナリ               | 疑似コード、アセンブリ、文字列、シンボル、呼び出し、参照                               | Hopper、Ghidra、または IDA；[ネイティブ分析](https://rea.tools/guides/native/)                                                                     |
-| オフライン ELF レイアウト        | セクション、セグメント、元のシンボル／再配置情報、静的解析によるセキュリティ対策の候補 | Linux x64 で利用者が用意する pwntools；[バイナリ診断](docs/binary-diagnostics.md)                                                                  |
-| EVM バイトコード                 | ディスパッチセレクター、バイトオフセット、推定された引数と状態変更の可否               | ローカルの生バイト／16 進数の入力ファイル；[オフライン EVM ガイド](docs/evm-bytecode.md)                                                           |
-| 記録済みの Linux クラッシュ      | 生の note レコード、記録された全スレッドのレジスター／シグナル、任意のマッピング候補   | 利用者が用意する pwntools；GDB/pwndbg は任意；[記録済みクラッシュ](docs/recorded-crashes.md)                                                       |
-| JavaScript / Electron            | モジュール、インポート、ソースマップ、ルート、IPC、ネイティブアドオンの関係            | Node.js と npm；[アプリケーション分析](https://rea.tools/guides/javascript/)                                                                       |
-| ウェブサイト                     | ページ構造、スクリプト、ネットワークの観測結果、依頼されたスクリーンショット           | Chrome 系ブラウザー；[ブラウザー分析](https://rea.tools/guides/browser/)                                                                           |
-| 保存済みのネットワークキャプチャ | リクエスト、レスポンス、取得可能なペイロード、ソース内の位置                           | HAR；mitmproxy ネイティブ形式のキャプチャには Linux 上の mitmdump；[キャプチャガイド](docs/web-network-captures.md)                                |
-| .NET アセンブリ                  | メタデータ、CIL 命令、宣言されたネイティブ依存関係、ビルドの比較                       | 静的な検査；[マネージドコードのガイド](docs/managed-code-analysis.md)                                                                              |
-| Android APK                      | マニフェストの宣言、クラス、逆コンパイルされたメソッド、参照                           | Linux/macOS 上のヘッドレス JADX と完全な JDK；[Android ガイド](docs/android-analysis.md)                                                           |
-| ファームウェア                   | 領域、抽出結果、ネイティブ分析への引き継ぎ                                             | Linux 上の Binwalk / Unblob；[ファームウェアガイド](docs/firmware-analysis.md)                                                                     |
-| パッケージとリソース             | ファイル一覧、ダイジェスト、plist、Apple バンドルの構造、抽出されたリソース            | [アーティファクトと JavaScript のガイド](docs/javascript-artifact-reconstruction.md)、[Apple アプリケーション](docs/apple-application-analysis.md) |
-| プロセスの動作                   | ターミナル出力、対話、終了とファイルシステムの観測結果、実行の比較                     | ネイティブ PTY を備えた Linux/macOS；[プロセスキャプチャ](docs/process-capture.md)                                                                 |
+| 対象                             | REA が返すもの                                                                              | 要件とガイド                                                                                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ネイティブバイナリ               | 疑似コード、アセンブリ、文字列、シンボル、呼び出し、参照                                    | Hopper、Ghidra、または IDA；[ネイティブ分析](https://rea.tools/ja/guides/native/)                                                                  |
+| オフライン ELF レイアウト        | セクション、セグメント、元のシンボル／再配置情報、静的解析によるセキュリティ対策の候補      | Linux x64 で利用者が用意する pwntools；[バイナリ診断](docs/binary-diagnostics.md)                                                                  |
+| EVM バイトコード                 | ディスパッチセレクター、バイトオフセット、推定された引数と状態変更の可否                    | Linux x64 上のローカルの生バイト／16 進数の入力ファイル；[オフライン EVM ガイド](docs/evm-bytecode.md)                                             |
+| 記録済みの Linux クラッシュ      | 生の note レコード、記録された全スレッドのレジスター／シグナル、任意のマッピング候補        | Linux x64 で利用者が用意する pwntools；GDB/pwndbg は任意；[記録済みクラッシュ](docs/recorded-crashes.md)                                           |
+| JavaScript / Electron            | モジュール、インポート、ソースマップ、ルート、IPC、ネイティブアドオンの関係                 | Node.js と npm；[アプリケーション分析](https://rea.tools/ja/guides/javascript/)                                                                    |
+| ウェブサイト                     | ページ構造、スクリプト、ネットワークの観測結果、依頼されたスクリーンショット                | Chrome 系ブラウザー；[ブラウザー分析](https://rea.tools/ja/guides/browser/)                                                                        |
+| 保存済みのネットワークキャプチャ | リクエスト、レスポンス、取得可能なペイロード、ソース内の位置                                | HAR；mitmproxy ネイティブ形式のキャプチャには Linux 上の mitmdump；[キャプチャガイド](docs/web-network-captures.md)                                |
+| .NET アセンブリ                  | メタデータ、CIL 命令、宣言されたネイティブ依存関係、ビルドの比較                            | 静的な検査；[マネージドコードのガイド](docs/managed-code-analysis.md)                                                                              |
+| Android APK                      | マニフェストの宣言、クラス、逆コンパイルされたメソッド、参照                                | Linux/macOS/Windows x64 上のヘッドレス JADX と完全な JDK；[Android ガイド](docs/android-analysis.md)                                               |
+| Android デバイス                 | デバイス、パッケージ、プロセス、ログ、ダンプ、スクリーンキャプチャ、APK/ファイル転送        | 呼び出し側が用意した adb（エミュレーターまたは実機）；[ADB ガイド](docs/adb-device-analysis.md)                                                    |
+| JEBプロジェクト                  | エンジンによるプロジェクトユニット、アーティファクトのダイジェスト、型/メソッドの擬似コード | 呼び出し側が起動し MCP を提供する JEB クライアント（REA_JEB_MCP_URL で選択）；[JEB ガイド](docs/jeb-analysis.md)                                   |
+| Android リソース                 | デコードされたマニフェスト、文字列テーブル、ロケール、バージョン情報                        | 呼び出し側が用意した Apktool ランチャー；[リソースガイド](docs/apktool-resource-analysis.md)                                                       |
+| Flutter アプリ                   | Dart スナップショットハッシュ、ABI ごとのライブラリダイジェスト、エンジンビルドの来歴       | 不要（静的 APK 解析）；[Flutter ガイド](docs/flutter-analysis.md)                                                                                  |
+| ファームウェア                   | 領域、抽出結果、ネイティブ分析への引き継ぎ                                                  | Linux 上の Binwalk / Unblob；[ファームウェアガイド](docs/firmware-analysis.md)                                                                     |
+| 記録済みパケット                 | 選択フィールド、繰り返し値、フィルター、デコード指定                                        | Linux: TShark 4.x + prlimit; [キャプチャガイド](docs/packet-captures.md)                                                                           |
+| 記録済みロジック信号             | デコーダ注釈、サンプル範囲、診断情報                                                        | Linux: sigrok-cli 0.7.2 + prlimit; [信号記録ガイド](docs/signal-recordings.md)                                                                     |
+| パッケージとリソース             | ファイル一覧、ダイジェスト、plist、Apple バンドルの構造、抽出されたリソース                 | [アーティファクトと JavaScript のガイド](docs/javascript-artifact-reconstruction.md)、[Apple アプリケーション](docs/apple-application-analysis.md) |
+| プロセスの動作                   | ターミナル出力、対話、終了とファイルシステムの観測結果、実行の比較                          | ネイティブ PTY を備えた Linux/macOS；[プロセスキャプチャ](docs/process-capture.md)                                                                 |
 
 静的な JavaScript と .NET の検査は、指定されたファイルを読み取り、アプリケーションを実行しません。実行時キャプチャは、あなたのユーザー権限で対象を実行したり、対象とやり取りしたりします。それぞれの実行時ガイドに、どのような操作が行われるかを記載しています。
 
@@ -154,26 +159,26 @@ REA には Node.js 22.x（>=22.19）、24.x（>=24.11）、または 26+ と npm
 
 ## 事例
 
-[![DX-Ball の音声パン、Notion のクリップボードブリッジ、TH04 の弾幕リングの事例を表すイラスト](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+[![DX-Ball の音声パン、Notion のクリップボードブリッジ、TH04 の弾幕リングの事例を表すイラスト](docs/assets/rea-showcases.png)](https://rea.tools/ja/showcase/)
 
 ### DX-Ball：音声のパン計算を再構築する
 
 音声の呼び出しから位置をパンに変換する補助関数をたどり、命令を調べ、不完全な疑似コードを C に書き直します。再構築した実装は、元の x86 に対する 3,205 ケースの検証を通過し、コンパイル後の関数の全 63 バイトを再現しています。
 
-[事例を読む](https://rea.tools/showcase/dx-ball/) ·
+[事例を読む](https://rea.tools/ja/showcase/dx-ball/) ·
 [再構築リポジトリ](https://github.com/N0zoM1z0/dx-ball)
 
 ### Notion：Electron のクリップボードブリッジを追跡する
 
 レンダラーのクリップボード API を見つけ、preload と IPC を経由してメインプロセスまでたどり、リッチなクリップボード形式を調べます。
 
-[事例を読む](https://rea.tools/showcase/notion/)
+[事例を読む](https://rea.tools/ja/showcase/notion/)
 
 ### TH04：DOS の弾幕リングの計算を復元する
 
 元の PC-98 ゲームの 16 ビット命令を調べ、固定角度と自機を狙う角度の計算を復元し、再構築した C++ を当時のコンパイラーの出力と比較します。
 
-[事例を読む](https://rea.tools/showcase/th04/) ·
+[事例を読む](https://rea.tools/ja/showcase/th04/) ·
 [再構築リポジトリ](https://github.com/N0zoM1z0/th04)
 
 REA で興味深い対象を調べたら、ぜひ共有してください。[issue](https://github.com/morluto/rea/issues) または [pull request](https://github.com/morluto/rea/pulls) に、対象、調べたかったこと、REA がどう役立ったか、何が分かったかを記載してください。
@@ -245,7 +250,7 @@ npx rea-agents@latest setup
 
 ## ドキュメント
 
-まずはウェブサイトの[実践ガイド](https://rea.tools/guides/)を参照してください。正確なオプション、前提条件、結果の契約については、以下を参照してください。
+まずはウェブサイトの[実践ガイド](https://rea.tools/ja/guides/)を参照してください。正確なオプション、前提条件、結果の契約については、以下を参照してください。
 
 - [インストールとセットアップ](docs/installation.md)：エージェントの登録、プロバイダーの設定、更新、アンインストール。
 - [準備状況の確認とトラブルシューティング](docs/installation.md#check-readiness-for-your-task)：特定のエージェントや分析エンジンを診断。
@@ -258,7 +263,7 @@ npx rea-agents@latest setup
 
 ## スター履歴
 
-🎉 **GitHub スター 50,000 件、ありがとうございます！**
+🎉 **GitHub スター 110,000 件、ありがとうございます！**
 
 REA の利用、バグ報告、機能の要望、ビルドのテスト、修正への貢献に感謝します。
 
@@ -272,7 +277,13 @@ REA の利用、バグ報告、機能の要望、ビルドのテスト、修正�
 
 ## 免責事項
 
-REA は、合法的なリバースエンジニアリングの研究、分析、再構築のためのツールを提供します。必要な許可を得て、適用される法律に従う責任は利用者にあります。このプロジェクトは違法または無許可の利用を支持しません。
+責任ある利用については [DISCLAIMER.md](DISCLAIMER.md) を参照してください。
+
+REA は、法令に従った研究、教育、相互運用性の確保、ソフトウェアの保存、および所有するソフトウェアや調査を許可されたソフトウェアの解析を目的としています。
+
+The project's position on illegal or unauthorized use covers all REA
+versions, distribution channels, and platforms; each copy retains its
+applicable licenses.
 
 ## 貢献する
 
@@ -283,3 +294,15 @@ REA への貢献を歓迎します！[issue を作成](https://github.com/morlut
 ## ライセンス
 
 [MIT](LICENSE)
+
+REA-authored code is licensed under MIT. Third-party material retains its own
+licenses and copyright notices; see [Third-party notices](THIRD_PARTY_NOTICES.md)
+for the dependency inventory, preserved license texts, and external-tool terms.
+
+**You must legally obtain and be authorized to use commercial tools**, including
+IDA Pro / Hex-Rays decompilers, Hopper, and JEB, under their applicable licenses.
+REA grants no tool license, key, or activation entitlement. Trials and demos
+remain subject to vendor terms, including user, feature, automation, and output
+sharing restrictions. Cracked copies, stolen keys, unauthorized key sharing,
+and bypassing license restrictions are not authorized. This guidance does not
+amend MIT or third-party licenses.

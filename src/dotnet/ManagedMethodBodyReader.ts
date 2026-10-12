@@ -1,3 +1,7 @@
+import {
+  admitManagedProjection,
+  type ManagedDecodeBudget,
+} from "./ManagedDecodeBudget.js";
 import type { ManagedPeLayout } from "./ManagedPeReader.js";
 import type { ManagedMethodBody } from "./ManagedMemberInspectorCore.js";
 import {
@@ -62,19 +66,6 @@ const readMethodBodyHeader = (
   };
 };
 
-const readExceptionRegions = (
-  bytes: Buffer,
-  sectionOffset: number,
-  methodEnd: number,
-  ilSize: number,
-  instructionOffsets: readonly number[],
-): ReturnType<typeof parseExceptionRegions> =>
-  validateExceptionRegionRanges(
-    parseExceptionRegions(bytes, sectionOffset, methodEnd),
-    ilSize,
-    instructionOffsets,
-  );
-
 /** Decode admitted managed CIL, retaining unavailable implementation metadata as partial. */
 export const methodBody = (
   bytes: Buffer,
@@ -84,6 +75,7 @@ export const methodBody = (
     implFlags: 0,
     flags: 0,
   },
+  budget?: ManagedDecodeBudget,
 ): ManagedMethodBody => {
   if (rva === 0) return emptyMethodBody(rva, "absent", null);
   if (
@@ -108,7 +100,15 @@ export const methodBody = (
     if (ilOffset > bytes.length - header.ilSize)
       throw new RangeError("Method IL bytes leave artifact");
     const il = bytes.subarray(ilOffset, ilOffset + header.ilSize);
-    const decoded = decodeInstructions(il);
+    // Bound the actual instruction records before allocating them. One raw
+    // byte is only an upper bound on count; wide operands do not create a
+    // separate instruction for every byte. Retained output is charged below.
+    const decoded = decodeInstructions(
+      il,
+      budget === undefined
+        ? undefined
+        : (start) => budget.admitTransient(256, ilOffset + start),
+    );
     const opcodeCounts: Record<string, number> = {};
     for (const instruction of decoded.parsed)
       opcodeCounts[instruction.opcode] =
@@ -132,13 +132,16 @@ export const methodBody = (
       "utf8",
     );
     const methodEnd = ilOffset + header.ilSize;
-    const sectionOffset = (methodEnd + 3) & ~3;
+    const sectionOffset = Math.ceil(methodEnd / 4) * 4;
     const exceptionRegions =
       header.format === "fat" && (header.flags & 8) !== 0
-        ? readExceptionRegions(
-            bytes,
-            sectionOffset,
-            offset + methodExtent,
+        ? validateExceptionRegionRanges(
+            parseExceptionRegions(
+              bytes,
+              sectionOffset,
+              offset + methodExtent,
+              budget,
+            ),
             header.ilSize,
             decoded.instructionStarts,
           )
@@ -148,7 +151,7 @@ export const methodBody = (
       decoded.truncated,
       exceptionRegions,
     );
-    return {
+    const body: ManagedMethodBody = {
       status,
       header_format: header.format,
       rva,
@@ -178,7 +181,13 @@ export const methodBody = (
           ? "Instruction decoding stopped before the end of the method body"
           : null),
     };
+    return budget === undefined ? body : admitManagedProjection(body, budget);
   } catch (cause: unknown) {
+    if (
+      cause instanceof ManagedReaderFailure &&
+      cause.issue.code === "resource-limit"
+    )
+      throw cause;
     if (
       !(cause instanceof ManagedReaderFailure) &&
       !(cause instanceof RangeError)
@@ -189,6 +198,9 @@ export const methodBody = (
       "malformed",
       cause instanceof Error ? cause.message : "Method body parse failed",
     );
+  } finally {
+    // IL and exception-section bookkeeping coexist until the body is built.
+    budget?.releaseTransient();
   }
 };
 

@@ -29,8 +29,16 @@ it("runs every managed static inspection independently of an active native targe
   );
   const path = join(directory, "fixture.dll");
   const otherPath = join(directory, "other-fixture.dll");
+  const partialPath = join(directory, "partial-method.dll");
   await writeFile(path, buildManagedPeFixture());
   await writeFile(otherPath, buildManagedPeFixture({ methodName: "Other" }));
+  await writeFile(
+    partialPath,
+    buildManagedPeFixture({
+      virtualSectionSize: 0x801,
+      ilBody: Buffer.from([0x06, 0x2a]),
+    }),
+  );
   const session = composeBinarySession(new AnalysisProviderRegistry([]), [
     new ManagedStaticProvider(),
   ]);
@@ -105,6 +113,7 @@ it("runs every managed static inspection independently of an active native targe
       operation: "inspect_managed_members",
       subject: { local_path: otherPath, format: "pe" },
     });
+    await verifyManagedTypeSelection(client, path, otherPath);
     const boundaries = structured(
       await client.callTool({
         name: "inspect_managed_native_boundaries",
@@ -115,6 +124,27 @@ it("runs every managed static inspection independently of an active native targe
       operation: "inspect_managed_native_boundaries",
       provider: { id: "rea-dotnet-static" },
       subject: { local_path: path, format: "pe" },
+    });
+    const partial = structured(
+      await client.callTool({
+        name: "inspect_managed_members",
+        arguments: { path: partialPath },
+      }),
+    );
+    expect(partial).toMatchObject({
+      subject: { local_path: partialPath, format: "pe" },
+      normalized_result: {
+        methods: [
+          {
+            body: {
+              status: "malformed",
+              normalized_il_sha256: null,
+              issue: "Method body leaves file-backed PE section data",
+            },
+          },
+        ],
+        coverage: { state: "partial" },
+      },
     });
   } finally {
     await Promise.all([client.close(), server.close()]);
@@ -413,6 +443,58 @@ const verifyImport = async (
         },
       ],
     },
+  });
+};
+
+/** Selected type names reach the provider and unmatched names stay visible. */
+const verifyManagedTypeSelection = async (
+  client: Client,
+  path: string,
+  otherPath: string,
+): Promise<void> => {
+  const advertised = (await client.listTools()).tools.find(
+    (tool) => tool.name === "inspect_managed_members",
+  );
+  if (advertised === undefined) throw new Error("missing managed member tool");
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  expect(ajv.validateSchema(advertised.inputSchema)).toBe(true);
+  const validate = ajv.compile(advertised.inputSchema);
+  expect(
+    validate({ path, type_names: ["Fixture.Program", "Missing.Type"] }),
+  ).toBe(true);
+  expect(
+    validate({ path, type_names: ["Fixture.Program", "Fixture.Program"] }),
+  ).toBe(false);
+  const selected = structured(
+    await client.callTool({
+      name: "inspect_managed_members",
+      arguments: { path, type_names: ["Fixture.Program", "Missing.Type"] },
+    }),
+  );
+  expect(selected).toMatchObject({
+    parameters: { path, type_names: ["Fixture.Program", "Missing.Type"] },
+    normalized_result: {
+      types: [expect.objectContaining({ full_name: "Fixture.Program" })],
+      methods: [expect.objectContaining({ declaring_type: "Fixture.Program" })],
+      selection: {
+        type_names: ["Fixture.Program", "Missing.Type"],
+        unmatched_type_names: ["Missing.Type"],
+      },
+    },
+  });
+  const repeatedSelection = await client.callTool({
+    name: "inspect_managed_members",
+    arguments: { path, type_names: ["Fixture.Program", "Fixture.Program"] },
+  });
+  expect(repeatedSelection.isError).toBe(true);
+  const reselectedOtherTarget = structured(
+    await client.callTool({
+      name: "inspect_managed_artifact",
+      arguments: { path: otherPath },
+    }),
+  );
+  expect(reselectedOtherTarget).toMatchObject({
+    subject: { local_path: otherPath, format: "pe" },
   });
 };
 

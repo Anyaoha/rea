@@ -1,13 +1,15 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import type { ServerContext } from "@modelcontextprotocol/server";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
+import { summarizeRetainedAndroidSearch } from "../application/android/AndroidSearchEvidenceSummary.js";
 import { toolContract } from "../contracts/toolContracts.js";
-import type { ToolContract } from "../contracts/toolContractTypes.js";
-import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { Logger } from "pino";
-import { logToolExecution } from "./toolLogging.js";
+import {
+  createContractToolHandler,
+  type ContractToolService,
+} from "./contractToolHandler.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 
 /** Bind Android handlers to their exact named contracts through shared workflows. */
 export const registerAndroidTools = (
@@ -15,22 +17,32 @@ export const registerAndroidTools = (
   service: AndroidAnalysisService,
   logger: Logger,
   recordEvidence?: EvidenceWriter["recordEvidence"],
+  withAdmittedAnalysis?: WithAdmittedAnalysis,
 ): void => {
-  const handler = (contract: ToolContract<AndroidOperation>) => {
-    const name = contract.name;
-    return async (input: unknown, context: ServerContext) => {
-      const result = await logToolExecution(logger, name, () =>
-        service.execute(name, input, { signal: context.mcpReq.signal }),
-      );
-      if (!result.ok) return server.delivery.toCallToolResult(result, contract);
-      const recorded = recordEvidence?.(result.value);
-      return server.delivery.toEvidenceToolResult(
-        result.value,
-        contract,
-        recorded,
-      );
-    };
+  const handler = createContractToolHandler(
+    server,
+    service,
+    logger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  // Focused class searches keep complete raw inventory in the retained
+  // record and deliver a bounded summary inline; the generic handler then
+  // records and delivers the summary as the search contract's Evidence.
+  const searchService: ContractToolService<"search_android_classes"> = {
+    execute: async (operation, input, options) => {
+      const executed = await service.execute(operation, input, options);
+      if (!executed.ok) return executed;
+      return summarizeRetainedAndroidSearch(executed.value, recordEvidence);
+    },
   };
+  const searchHandler = createContractToolHandler(
+    server,
+    searchService,
+    logger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
   const packageContract = toolContract("inspect_android_package");
   server.registerTool(
     packageContract.name,
@@ -41,7 +53,7 @@ export const registerAndroidTools = (
   server.registerTool(
     searchContract.name,
     toolRegistrationOptions(searchContract),
-    handler(searchContract),
+    searchHandler(searchContract),
   );
   const classContract = toolContract("inspect_android_class");
   server.registerTool(

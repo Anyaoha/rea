@@ -8,6 +8,7 @@ import {
   validateResidualUnknownAddition,
   type EvidenceBundle,
 } from "../../domain/evidenceBundle.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import {
@@ -24,6 +25,7 @@ import {
   type UpdateUnknownInput,
 } from "../../domain/residualUnknown.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 type EvidenceLedgerFailure = EvidenceIntegrityError;
 type RecordResult = Result<"added" | "duplicate", EvidenceLedgerFailure>;
@@ -36,7 +38,10 @@ export interface EvidenceImportDelta {
   readonly metadataChanged: boolean;
 }
 
-type ImportResult = Result<EvidenceImportDelta, EvidenceLedgerFailure>;
+type ImportResult = Result<
+  EvidenceImportDelta,
+  EvidenceLedgerFailure | AnalysisInputError
+>;
 
 /** Session-owned set of immutable evidence records. */
 export class EvidenceLedger {
@@ -75,10 +80,18 @@ export class EvidenceLedger {
     try {
       bundle = parseEvidenceBundle(input);
     } catch (cause: unknown) {
+      const failure = describeEvidenceBundleFailure(input, cause);
+      if (failure.kind === "single-record")
+        return err(
+          new AnalysisInputError("import_evidence_bundle", {
+            cause,
+            userMessage: failure.message,
+          }),
+        );
       return err(
         new EvidenceIntegrityError("Evidence bundle validation failed", {
           cause,
-          userMessage: describeEvidenceBundleFailure(input, cause),
+          userMessage: failure.message,
         }),
       );
     }
@@ -321,7 +334,9 @@ export class EvidenceLedger {
             unknown.severity === filters.severity) &&
           (filters.domain === undefined || unknown.domain === filters.domain),
       )
-      .sort((left, right) => left.unknown_id.localeCompare(right.unknown_id))
+      .sort((left, right) =>
+        compareUnicodeCodePoints(left.unknown_id, right.unknown_id),
+      )
       .map((unknown) => structuredClone(unknown));
   }
 
@@ -417,8 +432,9 @@ export class EvidenceLedger {
     unknowns: ReadonlyMap<string, ResidualUnknown>,
   ): Result<void, EvidenceIntegrityError | UnknownRegistryError> {
     try {
-      parseEvidenceBundle(
-        createEvidenceBundle([...records.values()], [...unknowns.values()]),
+      createImmutableEvidenceBundle(
+        [...records.values()],
+        [...unknowns.values()],
       );
     } catch (cause: unknown) {
       return err(new UnknownRegistryError("integrity", { cause }));

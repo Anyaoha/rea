@@ -208,16 +208,29 @@ const referencedEvidenceIds = (unknown: ResidualUnknown): readonly string[] => [
  * Name the bundle constraint that failed and how to recover. A single
  * Evidence record, such as one command result, is not a bundle.
  */
+export type EvidenceBundleFailureDescription =
+  | { readonly kind: "single-record"; readonly message: string }
+  | { readonly kind: "invalid-bundle"; readonly message: string };
+
 export const describeEvidenceBundleFailure = (
   input: unknown,
   cause: unknown,
-): string => {
-  const record = evidenceSchema.safeParse(input);
-  if (record.success)
-    return `Expected an Evidence bundle with records and manifest arrays, but this JSON is one Evidence record (${record.data.evidence_id}). Export a session bundle with the MCP export_evidence_bundle tool and supply that file.`;
-  return cause instanceof z.ZodError
-    ? `Evidence bundle does not match the bundle schema ${describeValidationFailure(cause)}. Supply an unmodified bundle written by export_evidence_bundle or rea evidence-export.`
-    : `Evidence bundle validation failed: ${describeValidationFailure(cause)}. Recreate or re-export the bundle, then try again.`;
+): EvidenceBundleFailureDescription => {
+  try {
+    const record = parseEvidence(input);
+    return {
+      kind: "single-record",
+      message: `Expected an Evidence bundle with records and manifest arrays, but this JSON is one Evidence record (${record.evidence_id}). Export a session bundle with the MCP export_evidence_bundle tool and supply that file.`,
+    };
+  } catch {
+    return {
+      kind: "invalid-bundle",
+      message:
+        cause instanceof z.ZodError
+          ? `Evidence bundle does not match the bundle schema ${describeValidationFailure(cause)}. Supply an unmodified bundle written by export_evidence_bundle or rea evidence-export.`
+          : `Evidence bundle validation failed: ${describeValidationFailure(cause)}. Recreate or re-export the bundle, then try again.`,
+    };
+  }
 };
 
 /** Locate the first schema issue, or keep a thrown constraint message. */
@@ -234,11 +247,33 @@ export const describeValidationFailure = (cause: unknown): string => {
 
 /** Parse records, verify semantic IDs, and reject inconsistent manifests. */
 export const parseEvidenceBundle = (input: unknown): EvidenceBundle => {
+  return parseBundle(input, false);
+};
+
+/** Authenticate and seal file-owned payloads once for downstream zero-copy reuse. */
+export const parseImmutableEvidenceBundle = (
+  input: unknown,
+): EvidenceBundle => {
+  return parseBundle(input, true);
+};
+
+const parseBundle = (input: unknown, seal: boolean): EvidenceBundle => {
   if (typeof input === "object" && input !== null) {
     const owned = immutableBundles.get(input);
     if (owned !== undefined) return owned;
   }
-  const parsed = evidenceBundleSchema.parse(input);
+  return authenticateBundle(evidenceBundleSchema.parse(input), seal);
+};
+
+/** Authenticate evidence and bundle invariants after the bundle shape is parsed. */
+export const authenticateParsedEvidenceBundle = (
+  parsed: EvidenceBundle,
+): EvidenceBundle => authenticateBundle(parsed, false);
+
+const authenticateBundle = (
+  parsed: EvidenceBundle,
+  seal: boolean,
+): EvidenceBundle => {
   const recordIds = parsed.records.map(({ evidence_id: id }) => id);
   if (new Set(recordIds).size !== recordIds.length)
     throw new TypeError("Evidence bundle contains duplicate record IDs");
@@ -246,7 +281,12 @@ export const parseEvidenceBundle = (input: unknown): EvidenceBundle => {
   const canonical = createEvidenceBundle(
     parsed.records.map((record, index) => {
       try {
-        return parseEvidence(record);
+        if (!seal) return parseEvidence(record);
+        // Schema parsing gave this boundary exclusive ownership. Register only
+        // validated payloads before authenticating the complete record envelope.
+        record.normalized_result = freezeJsonSnapshot(record.normalized_result);
+        record.raw_result = freezeJsonSnapshot(record.raw_result);
+        return immutableEvidence(record);
       } catch (cause: unknown) {
         if (cause instanceof z.ZodError)
           throw new z.ZodError(
@@ -262,6 +302,10 @@ export const parseEvidenceBundle = (input: unknown): EvidenceBundle => {
   );
   if (JSON.stringify(parsed) !== JSON.stringify(canonical))
     throw new TypeError("Evidence bundle manifests are not canonical");
+  if (seal) {
+    freezeJsonSnapshot(canonical);
+    immutableBundles.set(canonical, canonical);
+  }
   return canonical;
 };
 

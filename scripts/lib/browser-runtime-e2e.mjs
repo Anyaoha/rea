@@ -3,14 +3,12 @@ import { spawn, execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { access } from "node:fs/promises";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { CdpBrowserProvider } from "../../dist/browser/CdpBrowserProvider.js";
 import { CdpConnection } from "../../dist/browser/CdpConnection.js";
-import { waitForBrowserDevtoolsPort } from "../../dist/browser/BrowserProcessStartup.js";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { webExecutionSchema } from "../../dist/domain/webExecution.js";
 import { webEventListenersSchema } from "../../dist/domain/webEventListeners.js";
@@ -28,6 +26,11 @@ import {
   isolatedFixtureUrl,
 } from "./browser-runtime-world-e2e.mjs";
 
+// Arming, progress delivery, isolated-world proof and the page action cross
+// separate transports. Leave time for their round trips on shared CI runners;
+// coverage can include a late action even after request collection has ended.
+const executionObservationMs = 2_000;
+
 /** Exercise native browser runtime attribution through public CLI and stdio MCP, including arming. */
 export async function verifyBrowserRuntime(
   executable,
@@ -37,23 +40,11 @@ export async function verifyBrowserRuntime(
   const site = await startBrowserRuntimeSite();
   let fixture;
   let primaryError;
-  let stderr = "";
   let action;
   let client;
   try {
     fixture = await startRuntimeFixtureBrowser(executable, site.origin);
-    const { browser, profile } = fixture;
-    browser.stderr.on("data", (chunk) => {
-      if (stderr.length < 65536) stderr += chunk;
-    });
-    const port = await waitForBrowserDevtoolsPort({
-      child: browser,
-      executable,
-      activePortPath: join(profile, "DevToolsActivePort"),
-      stderr: () => stderr,
-      timeoutMs: 20_000,
-    });
-    const endpoint = `http://127.0.0.1:${port}`;
+    const endpoint = `http://127.0.0.1:${fixture.port}`;
     const targets = await new CdpBrowserProvider().listTargets({
       cdp_endpoint: endpoint,
       allowed_origins: [site.origin],
@@ -210,7 +201,7 @@ async function executionMcp(
   const response = await client.callTool(
     {
       name: "observe_web_execution",
-      arguments: { ...input, observation_ms: 300 },
+      arguments: { ...input, observation_ms: executionObservationMs },
     },
     {
       timeout: 40_000,
@@ -259,7 +250,7 @@ async function executionCli(entrypoint, input, env, action, isolatedContext) {
       input.cdp_endpoint,
       input.target_id,
       "--observation-ms",
-      "300",
+      String(executionObservationMs),
       "--json",
     ],
     { env, stdio: ["ignore", "pipe", "pipe"] },
@@ -382,7 +373,14 @@ function assertExecution(evidence, site, requireBlock = true) {
   const request = result.requests.find((item) =>
     item.url.endsWith("/evidence?marker=chosen"),
   );
-  assert.ok(request, "The selected request initiator must be retained");
+  assert.ok(
+    request,
+    `The selected request initiator must be retained: ${JSON.stringify({
+      window: result.window,
+      requests: result.requests.map((item) => item.url),
+      excluded_requests: result.excluded_requests,
+    })}`,
+  );
   assert.ok(
     request.callsites.some(
       (site) =>

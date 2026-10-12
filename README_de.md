@@ -1,6 +1,6 @@
 <div align="center">
 
-[English](README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · **Deutsch** · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md)
+[English](README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · **Deutsch** · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
 
 # REA: Alles reverse-engineeren
 
@@ -9,7 +9,6 @@
 **Eine Funktion gefällt dir? Verstehe, wie sie funktioniert – bis hinunter auf die Binärebene.**
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](docs/mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
@@ -18,7 +17,7 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
-**[Website](https://rea.tools/) · [Anleitungen](https://rea.tools/guides/) · [Fallstudien](https://rea.tools/showcase/)**
+**[Website](https://rea.tools/de/) · [Anleitungen](https://rea.tools/de/guides/) · [Fallstudien](https://rea.tools/de/showcase/)**
 
 [Schnellstart](#schnellstart) · [So funktioniert REA](#so-funktioniert-rea) · [Was du analysieren kannst](#was-du-analysieren-kannst) · [Fallstudien](#fallstudien) · [Häufige Fragen](#häufige-fragen) · [Dokumentation](#dokumentation)
 
@@ -54,7 +53,7 @@ REA verbindet deinen Agenten mit Werkzeugen zum Untersuchen nativer Binärdateie
 
 Die Einrichtung registriert REA bei deinem Agenten und installiert passende Workflow-Anweisungen. Für native Analysen kannst du eine vorhandene Hopper- oder Ghidra-Installation verwenden. Mit deiner Zustimmung kann die Einrichtung auch Hopper installieren. Statische JavaScript-Analysen benötigen keines der beiden Programme.
 
-> **[Besuche die REA-Website](https://rea.tools/)** für Einrichtungshinweise, bebilderte Anleitungen und echte Fallstudien.
+> **[Besuche die REA-Website](https://rea.tools/de/)** für Einrichtungshinweise, bebilderte Anleitungen und echte Fallstudien.
 
 ## Schnellstart
 
@@ -133,16 +132,22 @@ REA benötigt Node.js 22.x (>=22.19), 24.x (>=24.11) oder 26+ sowie npm. Zusätz
 
 | Ziel                                | Was REA zurückgibt                                                                                              | Voraussetzungen und Anleitung                                                                                                                 |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native Binärdateien                 | Pseudocode, Assemblercode, Zeichenketten, Symbole, Aufrufe und Verweise                                         | Hopper, Ghidra oder IDA; [native Analyse](https://rea.tools/guides/native/)                                                                   |
+| Native Binärdateien                 | Pseudocode, Assemblercode, Zeichenketten, Symbole, Aufrufe und Verweise                                         | Hopper, Ghidra oder IDA; [native Analyse](https://rea.tools/de/guides/native/)                                                                |
 | Offline-ELF-Struktur                | Sektionen, Segmente, ursprüngliche Symbole/Relokationen und mögliche Schutzmaßnahmen aus statischer Analyse     | Vom Aufrufer bereitgestelltes pwntools unter Linux x64; [Binärdiagnostik](docs/binary-diagnostics.md)                                         |
-| EVM-Bytecode                        | Dispatch-Selektoren, Byte-Offsets, abgeleitete Argumente und Veränderbarkeit des Zustands                       | Lokale Eingabe mit Rohbytes oder Hexdarstellung; [Offline-EVM-Leitfaden](docs/evm-bytecode.md)                                                |
-| Aufgezeichnete Linux-Abstürze       | Unverarbeitete Note-Einträge, Register/Signale aller aufgezeichneten Threads und optionale Zuordnungskandidaten | Vom Aufrufer bereitgestelltes pwntools; optional GDB/pwndbg; [aufgezeichnete Abstürze](docs/recorded-crashes.md)                              |
-| JavaScript / Electron               | Module, Imports, Source Maps, Routen, IPC und Beziehungen zu nativen Add-ons                                    | Node.js und npm; [Anwendungsanalyse](https://rea.tools/guides/javascript/)                                                                    |
-| Websites                            | Seitenstruktur, Skripte, Netzwerkbeobachtungen und angeforderte Screenshots                                     | Ein Browser aus der Chrome-Familie; [Browseranalyse](https://rea.tools/guides/browser/)                                                       |
+| EVM-Bytecode                        | Dispatch-Selektoren, Byte-Offsets, abgeleitete Argumente und Veränderbarkeit des Zustands                       | Lokale Eingabe mit Rohbytes oder Hexdarstellung unter Linux x64; [Offline-EVM-Leitfaden](docs/evm-bytecode.md)                                |
+| Aufgezeichnete Linux-Abstürze       | Unverarbeitete Note-Einträge, Register/Signale aller aufgezeichneten Threads und optionale Zuordnungskandidaten | Vom Aufrufer bereitgestelltes pwntools unter Linux x64; optional GDB/pwndbg; [aufgezeichnete Abstürze](docs/recorded-crashes.md)              |
+| JavaScript / Electron               | Module, Imports, Source Maps, Routen, IPC und Beziehungen zu nativen Add-ons                                    | Node.js und npm; [Anwendungsanalyse](https://rea.tools/de/guides/javascript/)                                                                 |
+| Websites                            | Seitenstruktur, Skripte, Netzwerkbeobachtungen und angeforderte Screenshots                                     | Ein Browser aus der Chrome-Familie; [Browseranalyse](https://rea.tools/de/guides/browser/)                                                    |
 | Gespeicherte Netzwerkaufzeichnungen | Anfragen, Antworten, zugängliche Nutzdaten und Quellpositionen                                                  | HAR; mitmdump unter Linux für Aufzeichnungen im nativen mitmproxy-Format; [Leitfaden zu Netzwerkaufzeichnungen](docs/web-network-captures.md) |
 | .NET-Assemblies                     | Metadaten, CIL-Anweisungen, deklarierte native Abhängigkeiten und Build-Vergleiche                              | Statische Untersuchung; [Leitfaden für verwalteten Code](docs/managed-code-analysis.md)                                                       |
-| Android-APKs                        | Manifest-Deklarationen, Klassen, dekompilierte Methoden und Verweise                                            | JADX ohne grafische Oberfläche und ein vollständiges JDK unter Linux/macOS; [Android-Leitfaden](docs/android-analysis.md)                     |
+| Android-APKs                        | Manifest-Deklarationen, Klassen, dekompilierte Methoden und Verweise                                            | JADX ohne grafische Oberfläche und ein vollständiges JDK unter Linux/macOS/Windows x64; [Android-Leitfaden](docs/android-analysis.md)         |
+| Android-Geräte                      | Geräte, Pakete, Prozesse, Logs, Dumps, Bildschirmaufnahmen sowie APK- und Dateiübertragungen                    | Vom Aufrufer bereitgestelltes adb (Emulator oder Gerät); [ADB-Leitfaden](docs/adb-device-analysis.md)                                         |
+| JEB-Projekte                        | Engine-gestützte Projekteinheiten, Artefakt-Prüfsummen und Pseudokode von Typen/Methoden                        | Ein vom Aufrufer gestarteter JEB-Client mit MCP, ausgewählt über REA_JEB_MCP_URL; [JEB-Leitfaden](docs/jeb-analysis.md)                       |
+| Android-Ressourcen                  | Dekodiertes Manifest, String-Tabellen, Sprachen und Versionsfakten                                              | Vom Aufrufer bereitgestellter Apktool-Starter; [Ressourcen-Leitfaden](docs/apktool-resource-analysis.md)                                      |
+| Flutter-Apps                        | Dart-Snapshot-Hash, Per-ABI-Bibliotheksprüfsummen und Engine-Build-Provenienz                                   | Keine (statische APK-Analyse); [Flutter-Leitfaden](docs/flutter-analysis.md)                                                                  |
 | Firmware                            | Bereiche, Extraktionsergebnisse und Übergaben an die native Analyse                                             | Binwalk / Unblob unter Linux; [Firmware-Leitfaden](docs/firmware-analysis.md)                                                                 |
+| Aufgezeichnete Pakete               | Ausgewählte Felder, wiederholte Werte, Filter und Decode-as-Regeln                                              | Linux: TShark 4.x + prlimit; [Mitschnitt-Anleitung](docs/packet-captures.md)                                                                  |
+| Aufgezeichnete Logiksignale         | Decoder-Anmerkungen, Sample-Bereiche und Diagnosen                                                              | Linux: sigrok-cli 0.7.2 + prlimit; [Signalaufzeichnungen](docs/signal-recordings.md)                                                          |
 | Pakete und Ressourcen               | Dateiinventare, Hashwerte, plists, Aufbau von Apple-Bundles und extrahierte Ressourcen                          | [Artefakt- und JavaScript-Leitfaden](docs/javascript-artifact-reconstruction.md), [Apple-Anwendungen](docs/apple-application-analysis.md)     |
 | Prozessverhalten                    | Terminalausgabe, Interaktionen, Beobachtungen zu Prozessende und Dateisystem sowie Laufvergleiche               | Linux/macOS mit nativer PTY; [Prozessaufzeichnung](docs/process-capture.md)                                                                   |
 
@@ -154,25 +159,25 @@ Native Formate und unterstützte Hostsysteme unterscheiden sich je nach Provider
 
 ## Fallstudien
 
-[![Illustrationen der Fallstudien zu DX-Balls Klangbalance, Notions Zwischenablage-Brücke und TH04s Geschossring](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+[![Illustrationen der Fallstudien zu DX-Balls Klangbalance, Notions Zwischenablage-Brücke und TH04s Geschossring](docs/assets/rea-showcases.png)](https://rea.tools/de/showcase/)
 
 ### DX-Ball: Eine Stereo-Panning-Berechnung rekonstruieren
 
 Verfolge einen Sound-Aufruf zur Hilfsfunktion, die Positionen in Panning-Werte umrechnet, untersuche die Anweisungen und überführe unvollständigen Pseudocode in C. Die Rekonstruktion besteht 3.205 Tests mit dem ursprünglichen x86-Code und reproduziert alle 63 Bytes der kompilierten Funktion.
 
-[Fallstudie lesen](https://rea.tools/showcase/dx-ball/) · [Rekonstruktionsrepository](https://github.com/N0zoM1z0/dx-ball)
+[Fallstudie lesen](https://rea.tools/de/showcase/dx-ball/) · [Rekonstruktionsrepository](https://github.com/N0zoM1z0/dx-ball)
 
 ### Notion: Die Electron-Zwischenablagebrücke verfolgen
 
 Finde die Zwischenablage-API des Renderers, verfolge sie über preload und IPC bis zum Hauptprozess und untersuche das Zwischenablageformat samt Formatierungsdaten.
 
-[Fallstudie lesen](https://rea.tools/showcase/notion/)
+[Fallstudie lesen](https://rea.tools/de/showcase/notion/)
 
 ### TH04: Eine DOS-Geschossring-Berechnung wiederherstellen
 
 Untersuche die 16-Bit-Anweisungen des ursprünglichen PC-98-Spiels, rekonstruiere die festen und zielgerichteten Winkelberechnungen und vergleiche das rekonstruierte C++ mit der Ausgabe des damaligen Compilers.
 
-[Fallstudie lesen](https://rea.tools/showcase/th04/) · [Rekonstruktionsrepository](https://github.com/N0zoM1z0/th04)
+[Fallstudie lesen](https://rea.tools/de/showcase/th04/) · [Rekonstruktionsrepository](https://github.com/N0zoM1z0/th04)
 
 Wenn du mit REA etwas Interessantes untersucht hast, würden wir es gern sehen. Teile deine Fallstudie in einem [Issue](https://github.com/morluto/rea/issues) oder [Pull Request](https://github.com/morluto/rea/pulls) und beschreibe das Ziel, deine Frage, wie REA geholfen hat und was du herausgefunden hast.
 
@@ -243,7 +248,7 @@ Wenn du einen Agenten verwendest, schließe die [Aktualisierung der Einrichtung]
 
 ## Dokumentation
 
-Beginne mit den [praxisnahen Anleitungen](https://rea.tools/guides/) auf der Website. Genaue Optionen, Voraussetzungen und Ergebniskontrakte findest du hier:
+Beginne mit den [praxisnahen Anleitungen](https://rea.tools/de/guides/) auf der Website. Genaue Optionen, Voraussetzungen und Ergebniskontrakte findest du hier:
 
 - [Installation und Einrichtung](docs/installation.md): Agentenregistrierung, Provider-Konfiguration, Updates und Deinstallation.
 - [Bereitschaft und Fehlerbehebung](docs/installation.md#check-readiness-for-your-task): Diagnose eines bestimmten Agenten oder einer Analyse-Engine.
@@ -256,7 +261,7 @@ Melde Sicherheitslücken gemäß [SECURITY.md](SECURITY.md).
 
 ## Sternverlauf
 
-🎉 **50.000 GitHub-Sterne – vielen Dank!**
+🎉 **110.000 GitHub-Sterne – vielen Dank!**
 
 Danke an alle, die REA nutzen, Fehler melden, Funktionswünsche äußern, Builds testen und Fehlerbehebungen beitragen.
 
@@ -270,7 +275,13 @@ Danke an alle, die REA nutzen, Fehler melden, Funktionswünsche äußern, Builds
 
 ## Haftungsausschluss
 
-REA stellt Werkzeuge für rechtmäßige Reverse-Engineering-Forschung, Analyse und Rekonstruktion bereit. Du bist dafür verantwortlich, erforderliche Genehmigungen einzuholen und geltendes Recht einzuhalten. Das Projekt unterstützt keine rechtswidrige oder unbefugte Nutzung.
+Hinweise zur verantwortungsvollen Nutzung findest du in [DISCLAIMER.md](DISCLAIMER.md).
+
+REA dient der rechtmäßigen Forschung, Bildung, Interoperabilität, Softwareerhaltung und Analyse von Software, die dir gehört oder die du mit entsprechender Genehmigung untersuchen darfst.
+
+The project's position on illegal or unauthorized use covers all REA
+versions, distribution channels, and platforms; each copy retains its
+applicable licenses.
 
 ## Mitwirken
 
@@ -281,3 +292,15 @@ Die Entwicklungsumgebung und Prüfungen beschreibt [CONTRIBUTING.md](CONTRIBUTIN
 ## Lizenz
 
 [MIT](LICENSE)
+
+REA-authored code is licensed under MIT. Third-party material retains its own
+licenses and copyright notices; see [Third-party notices](THIRD_PARTY_NOTICES.md)
+for the dependency inventory, preserved license texts, and external-tool terms.
+
+**You must legally obtain and be authorized to use commercial tools**, including
+IDA Pro / Hex-Rays decompilers, Hopper, and JEB, under their applicable licenses.
+REA grants no tool license, key, or activation entitlement. Trials and demos
+remain subject to vendor terms, including user, feature, automation, and output
+sharing restrictions. Cracked copies, stolen keys, unauthorized key sharing,
+and bypassing license restrictions are not authorized. This guidance does not
+amend MIT or third-party licenses.

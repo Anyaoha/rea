@@ -3,13 +3,16 @@ import { z } from "zod";
 import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
 import {
   createAnalysisExecution,
+  type AnalysisExecution,
   type ExecutionOptions,
 } from "../application/AnalysisProvider.js";
 import {
   firmwareResultSchemas,
   type FirmwareRequest,
+  type FirmwarePartialObservation,
 } from "../domain/firmware/firmwareAnalysis.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -18,8 +21,11 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
+import type { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
 import { publishFirmwareExtraction } from "./FirmwarePublication.js";
 import {
   FIRMWARE_LIMITS,
@@ -41,6 +47,38 @@ import {
 } from "./FirmwareReports.js";
 
 type Outcome = Awaited<ReturnType<FirmwareAnalysisPort["execute"]>>;
+interface PendingFirmwareCleanup {
+  supervisor?: ProviderProcessSupervisor;
+  tree?: SafeOutputTree;
+  readonly root: PrivateRuntimeRoot;
+  readonly engine: string;
+  readonly operation: string;
+}
+
+interface FirmwareCleanupAttempt {
+  readonly failure: ProviderCleanupError | undefined;
+  readonly processUnverified: boolean;
+}
+
+const combineCleanupFailures = (
+  failures: readonly ProviderCleanupError[],
+): ProviderCleanupError | undefined => {
+  if (failures.length < 2) return failures[0];
+  return new ProviderCleanupError(
+    "firmware",
+    failures.flatMap((failure) => [...failure.cleanupResources]),
+    {
+      reason: "Multiple owned firmware resources could not be cleaned",
+      failures: failures.map((failure) => ({
+        engine: failure.providerId,
+        operation: failure.operation,
+        resources: [...failure.cleanupResources],
+        reason: failure.diagnostics?.reason ?? failure.message,
+      })),
+    },
+    { operation: "close_firmware", cause: new AggregateError(failures) },
+  );
+};
 const waitForPredecessor = (
   predecessor: Promise<void>,
   operation: string,
@@ -65,7 +103,8 @@ const limitations = [
 /** Queued bring-your-own firmware adapters with private snapshots and owned cleanup. */
 export class FirmwareProvider implements FirmwareAnalysisPort {
   #tail: Promise<void> = Promise.resolve();
-  #cleanupFailure: AnalysisError | undefined;
+  #closed = false;
+  readonly #pendingCleanup = new Map<string, PendingFirmwareCleanup>();
   constructor(
     readonly environment: Readonly<
       Record<string, string | undefined>
@@ -78,6 +117,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     request: FirmwareRequest,
     options?: ExecutionOptions,
   ): Promise<Outcome> {
+    if (this.#closed) return err(new AnalysisCancelledError(request.operation));
     const predecessor = this.#tail;
     let release = () => {};
     this.#tail = new Promise<void>((resolve) => {
@@ -95,10 +135,88 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
       );
     }
     try {
+      if (this.#closed)
+        return err(new AnalysisCancelledError(request.operation));
+      const cleanup = await this.#retryCleanup();
+      if (cleanup.processUnverified && cleanup.failure !== undefined)
+        return err(cleanup.failure);
       return await this.#execute(request, options);
     } finally {
       release();
     }
+  }
+
+  /** Retry every retained owner, reporting failures without discarding other roots. */
+  async close(): Promise<void> {
+    this.#closed = true;
+    await this.#tail;
+    const cleanup = await this.#retryCleanup();
+    if (cleanup.failure !== undefined) throw cleanup.failure;
+  }
+
+  async #retryCleanup(): Promise<FirmwareCleanupAttempt> {
+    const failures: ProviderCleanupError[] = [];
+    let processUnverified = false;
+    for (const [path, pending] of this.#pendingCleanup) {
+      try {
+        const stopped = await pending.supervisor?.stop();
+        if (stopped?.status === "incomplete") {
+          processUnverified = true;
+          failures.push(
+            new ProviderCleanupError(
+              pending.engine,
+              [path],
+              { reason: stopped.reason },
+              { operation: pending.operation },
+            ),
+          );
+          continue;
+        }
+        delete pending.supervisor;
+      } catch (cause: unknown) {
+        processUnverified = true;
+        failures.push(
+          new ProviderCleanupError(
+            pending.engine,
+            [path],
+            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { operation: pending.operation, cause },
+          ),
+        );
+        continue;
+      }
+      try {
+        if (pending.tree !== undefined) {
+          await pending.tree.rollback();
+          delete pending.tree;
+        }
+      } catch (cause: unknown) {
+        failures.push(
+          new ProviderCleanupError(
+            pending.engine,
+            [path, pending.tree?.outputRoot ?? path],
+            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { operation: pending.operation, cause },
+          ),
+        );
+      }
+      try {
+        await pending.root.close();
+        if (pending.tree === undefined) this.#pendingCleanup.delete(path);
+      } catch (cause: unknown) {
+        // A verified stopped process cannot use this root. Keep ownership for
+        // later removal without blocking a new operation's disjoint workspace.
+        failures.push(
+          new ProviderCleanupError(
+            pending.engine,
+            [path],
+            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { operation: pending.operation, cause },
+          ),
+        );
+      }
+    }
+    return { failure: combineCleanupFailures(failures), processUnverified };
   }
 
   async #execute(
@@ -115,7 +233,6 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         : AbortSignal.any([options.signal, deadline]);
     let outcome: Outcome;
     try {
-      if (this.#cleanupFailure !== undefined) return err(this.#cleanupFailure);
       if (signal.aborted) throw new AnalysisCancelledError(request.operation);
       const command = await resolveFirmwareCommand(
         this.environment,
@@ -123,6 +240,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         request.operation,
       );
       root = await PrivateRuntimeRoot.create({ prefix: "rea-firmware-" });
+      const ownedRoot = root;
       const target = await snapshotFirmware(request, root.path, signal);
       const run = (
         args: readonly string[],
@@ -136,6 +254,14 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           cwd: root?.path ?? "",
           environment: this.environment,
           signal,
+          retainCleanup: (supervisor) => {
+            this.#pendingCleanup.set(ownedRoot.path, {
+              supervisor,
+              root: ownedRoot,
+              engine: engineName,
+              operation: request.operation,
+            });
+          },
           ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
           ...(outputBudget === undefined
             ? {}
@@ -257,6 +383,17 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           selection: target.selection,
           engine,
           signal,
+          retainCleanup: (tree) => {
+            const pending: PendingFirmwareCleanup = this.#pendingCleanup.get(
+              ownedRoot.path,
+            ) ?? {
+              root: ownedRoot,
+              engine: engineName,
+              operation: request.operation,
+            };
+            pending.tree = tree;
+            this.#pendingCleanup.set(ownedRoot.path, pending);
+          },
         });
         raw = { report, execution: processRun, version_execution: versionRun };
       }
@@ -316,43 +453,108 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
                       },
                     }),
       );
-      if (!outcome.ok && outcome.error.cleanupIncomplete) {
-        this.#cleanupFailure =
-          root === undefined ||
-          outcome.error.cleanupResources.includes(root.path)
-            ? outcome.error
-            : new ProviderCleanupError(
-                engineName,
-                [...outcome.error.cleanupResources, root.path],
-                outcome.error instanceof ProviderAdapterError
-                  ? (outcome.error.diagnostics ?? {
-                      reason: outcome.error.message,
-                    })
-                  : { reason: outcome.error.message },
-                { cause: outcome.error },
-              );
-      }
     }
-    // Never remove a workspace while process ownership remains uncertain.
-    if (this.#cleanupFailure !== undefined) return err(this.#cleanupFailure);
-    try {
-      await root?.close();
-    } catch (cause: unknown) {
-      this.#cleanupFailure = new ProviderCleanupError(
-        engineName,
-        [
-          root?.path ?? "unknown",
-          ...(outcome.ok && request.operation === "extract_firmware"
-            ? [request.input.output_directory]
-            : []),
-        ],
-        {
-          reason: cause instanceof Error ? cause.message : String(cause),
-          previous_result: outcome.ok ? outcome.value.result : null,
-        },
-      );
-      return err(this.#cleanupFailure);
-    }
-    return outcome;
+    const finished = await finishFirmwareWorkspace(
+      root,
+      outcome,
+      engineName,
+      request,
+    );
+    if (
+      !finished.ok &&
+      finished.error.cleanupIncomplete &&
+      root !== undefined &&
+      !this.#pendingCleanup.has(root.path)
+    )
+      this.#pendingCleanup.set(root.path, {
+        root,
+        engine: engineName,
+        operation: request.operation,
+      });
+    return finished;
   }
 }
+
+/** Keep a completed extraction beside cleanup failure, or skip removal when ownership is uncertain. */
+export const finishFirmwareWorkspace = async (
+  root: { readonly path: string; close(): Promise<void> } | undefined,
+  outcome: Outcome,
+  engineName: string,
+  request: FirmwareRequest,
+): Promise<Outcome> => {
+  if (!outcome.ok && outcome.error.cleanupIncomplete) {
+    if (
+      root === undefined ||
+      outcome.error.cleanupResources.includes(root.path)
+    )
+      return outcome;
+    return err(
+      new ProviderCleanupError(
+        engineName,
+        [...outcome.error.cleanupResources, root.path],
+        outcome.error instanceof ProviderAdapterError
+          ? (outcome.error.diagnostics ?? { reason: outcome.error.message })
+          : { reason: outcome.error.message },
+        {
+          cause: outcome.error,
+          operation: request.operation,
+          ...(outcome.error.partialObservation === undefined
+            ? {}
+            : { partialObservation: outcome.error.partialObservation }),
+        },
+      ),
+    );
+  }
+  try {
+    await root?.close();
+  } catch (cause: unknown) {
+    const cleanup = new ProviderCleanupError(
+      engineName,
+      [
+        root?.path ?? "unknown",
+        ...(outcome.ok && request.operation === "extract_firmware"
+          ? [request.input.output_directory]
+          : []),
+      ],
+      { reason: cause instanceof Error ? cause.message : String(cause) },
+      {
+        cause,
+        operation: request.operation,
+        ...(outcome.ok
+          ? {
+              partialObservation: completedFirmwareObservation(outcome.value),
+            }
+          : outcome.error.partialObservation === undefined
+            ? {}
+            : { partialObservation: outcome.error.partialObservation }),
+      },
+    );
+    return err(
+      outcome.ok
+        ? cleanup
+        : analysisErrorWithCleanupFailure(
+            outcome.error,
+            cleanup,
+            request.operation,
+          ),
+    );
+  }
+  return outcome;
+};
+
+const completedFirmwareObservation = (
+  execution: AnalysisExecution,
+): FirmwarePartialObservation => ({
+  kind: "firmware",
+  result: execution.result,
+  provenance: jsonValueSchema.parse({
+    raw_result: execution.rawResult,
+    provider: execution.provider,
+    subject: execution.subject,
+    locations: execution.locations,
+    limitations: execution.limitations,
+    ...(execution.analysisProfile === undefined
+      ? {}
+      : { analysis_profile: execution.analysisProfile }),
+  }),
+});

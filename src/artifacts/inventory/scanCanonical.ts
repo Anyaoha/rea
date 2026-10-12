@@ -5,11 +5,13 @@ import { AsarArtifactReader } from "../AsarArtifactReader.js";
 
 import { lstat } from "node:fs/promises";
 import type { Stats } from "node:fs";
+import type { RootInventorySource } from "./classify.js";
 
 import {
   ArtifactReaderFailure,
   type ArtifactReader,
 } from "../ArtifactReader.js";
+import type { ArtifactResourceOwner } from "../ArtifactResourceScope.js";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
@@ -31,10 +33,14 @@ import {
   artifactGraphDigest,
   artifactManifestId,
 } from "../../domain/artifactIdentity.js";
-import { classifyAndHashRoot } from "./classify.js";
-import { type HashResult } from "../ArtifactHash.js";
-import { hashStableRootArtifact } from "./hashStableRootArtifact.js";
-import { createReader, inventoryLimitations } from "./reader.js";
+import { classifyAndHashRootForInventory } from "./classify.js";
+import { hostExecutableMarking } from "../hostExecutableMarking.js";
+import type { HashResult } from "../ArtifactHash.js";
+import {
+  hashStableRootArtifact,
+  hashStableRootArtifactHandle,
+} from "./hashStableRootArtifact.js";
+import { createReader, inventoryAssessment } from "./reader.js";
 import {
   scanReader,
   type PendingIntegrityContradiction,
@@ -46,39 +52,54 @@ import {
 
 export const scanCanonicalArtifactInventory = async (
   path: string,
-  options: ArtifactInventoryOptions = {},
+  options: ArtifactInventoryOptions,
+  readerFactory: typeof createReader = createReader,
+): Promise<ArtifactInventorySnapshot> =>
+  options.resourceScope.run(() =>
+    scanCanonicalArtifactInventoryInScope(path, options, readerFactory),
+  );
+
+export const scanCanonicalArtifactInventoryInScope = async (
+  path: string,
+  options: ArtifactInventoryOptions,
   readerFactory: typeof createReader = createReader,
 ): Promise<ArtifactInventorySnapshot> => {
   const integrity = options.integrity ?? STRICT_INTEGRITY_POLICY;
   const metadata = await lstat(path);
-  const { format: rootFormat, digest: rootDigest } = await classifyAndHashRoot(
+  const {
+    format: rootFormat,
+    digest: rootDigest,
+    rootSource,
+  } = await classifyAndHashRootForInventory(
     path,
     metadata.isDirectory(),
     metadata,
-    options.signal,
+    options,
   );
-  const reader = await readerFactory(
-    path,
-    rootFormat,
-    options.environment ?? {},
-    options.signal,
-  );
-  const ownedReaders: ArtifactReader[] = reader === undefined ? [] : [reader];
-  let outcome:
-    | {
-        readonly kind: "completed";
-        readonly snapshot: ArtifactInventorySnapshot;
-      }
-    | { readonly kind: "failed"; readonly cause: unknown };
+  let reader: ArtifactReader | undefined;
+  let readerCreationFailure: { readonly cause: unknown } | undefined;
   try {
+    reader = readerFactory(
+      path,
+      rootFormat,
+      options.environment ?? {},
+      rootSource,
+    );
+  } catch (cause: unknown) {
+    readerCreationFailure = { cause };
+  }
+  const ownedReaders: ArtifactReader[] = reader === undefined ? [] : [reader];
+  let outcome: InventoryScanOutcome;
+  try {
+    if (readerCreationFailure !== undefined) throw readerCreationFailure.cause;
     if (reader instanceof AsarArtifactReader)
       await reader.prepareContainer(rootDigest?.sha256, options.signal);
-    const { nodes, occurrences, pendingContradictions } = await scanReader(
-      reader,
-      ownedReaders,
-      options.signal,
-      integrity,
-    );
+    const {
+      nodes,
+      occurrences,
+      pendingContradictions,
+      caseCollisionLimitation,
+    } = await scanReader(reader, ownedReaders, options.signal, integrity);
     outcome = {
       kind: "completed",
       snapshot: await buildInventorySnapshot({
@@ -86,56 +107,102 @@ export const scanCanonicalArtifactInventory = async (
         metadata,
         rootFormat,
         rootDigest,
+        rootSource,
+        resourceScope: options.resourceScope,
         reader,
         signal: options.signal,
         nodes,
         occurrences,
         pendingContradictions,
+        caseCollisionLimitation,
       }),
     };
   } catch (cause: unknown) {
     outcome = { kind: "failed", cause };
   }
-  let cleanupFailure: ArtifactReaderFailure | undefined;
-  for (const owned of ownedReaders.reverse()) {
-    try {
-      await owned.close();
-    } catch (cleanupCause: unknown) {
-      const cleanup = ArtifactReaderFailure.cleanupObservation(
-        cleanupCause,
-        `artifact reader for ${path}`,
-      );
-      cleanupFailure = ArtifactReaderFailure.withCleanup(
-        cleanupFailure ??
-          (outcome.kind === "failed" ? outcome.cause : cleanupCause),
-        cleanup,
-        outcome.kind === "completed"
-          ? { kind: "artifact-inventory", inventory: outcome.snapshot }
-          : undefined,
-      );
-    }
-  }
+  const cleanupFailure = await cleanupInventoryOwners({
+    path,
+    options,
+    rootSource,
+    ownedReaders,
+    outcome,
+  });
   if (cleanupFailure !== undefined) throw cleanupFailure;
   if (outcome.kind === "failed") throw outcome.cause;
   return outcome.snapshot;
 };
 
+type InventoryScanOutcome =
+  | {
+      readonly kind: "completed";
+      readonly snapshot: ArtifactInventorySnapshot;
+    }
+  | { readonly kind: "failed"; readonly cause: unknown };
+
+const cleanupInventoryOwners = async ({
+  path,
+  options,
+  rootSource,
+  ownedReaders,
+  outcome,
+}: {
+  readonly path: string;
+  readonly options: ArtifactInventoryOptions;
+  readonly rootSource: RootInventorySource | undefined;
+  readonly ownedReaders: readonly ArtifactReader[];
+  readonly outcome: InventoryScanOutcome;
+}): Promise<ArtifactReaderFailure | undefined> => {
+  let cleanupFailure: ArtifactReaderFailure | undefined;
+  const owners: ArtifactResourceOwner[] = [...ownedReaders]
+    .reverse()
+    .map((reader) => ({
+      kind: "reader" as const,
+      reader,
+      resource: `artifact reader for ${path}`,
+    }));
+  if (rootSource !== undefined)
+    owners.push({
+      kind: "file-handle",
+      handle: rootSource.owner,
+      resource: `root artifact descriptor for ${path}`,
+    });
+  for (const owner of owners) {
+    const attempt = await options.resourceScope.release(owner);
+    if (attempt.kind === "released") continue;
+    const primary =
+      cleanupFailure ??
+      (outcome.kind === "failed" ? outcome.cause : attempt.cause);
+    cleanupFailure = ArtifactReaderFailure.withCleanup(
+      primary,
+      ArtifactReaderFailure.cleanupObservation(attempt.cause, owner.resource),
+      outcome.kind === "completed"
+        ? { kind: "artifact-inventory", inventory: outcome.snapshot }
+        : undefined,
+    );
+  }
+  return cleanupFailure;
+};
+
 interface SnapshotBuildInput {
+  readonly resourceScope: ArtifactInventoryOptions["resourceScope"];
   readonly path: string;
   readonly metadata: Stats;
   readonly rootFormat: ArtifactOccurrence["artifact_format"];
   readonly rootDigest: HashResult | null;
+  readonly rootSource: RootInventorySource | undefined;
   readonly reader: ArtifactReader | undefined;
   readonly signal: AbortSignal | undefined;
   readonly nodes: Map<string, ArtifactNode>;
   readonly occurrences: MutableOccurrence[];
   readonly pendingContradictions: PendingIntegrityContradiction[];
+  readonly caseCollisionLimitation: string | undefined;
 }
 
 const buildInventorySnapshot = async (
   input: SnapshotBuildInput,
 ): Promise<ArtifactInventorySnapshot> => {
-  const { path, metadata, rootFormat, rootDigest, reader, signal } = input;
+  const { path, metadata, rootFormat, rootDigest, rootSource, reader, signal } =
+    input;
   materializeDirectoryNodes(input.occurrences, input.nodes);
   const rootNode = createRootNode({
     digest: rootDigest,
@@ -145,7 +212,7 @@ const buildInventorySnapshot = async (
   rekeyOccurrences(rootNode.artifact_id, input.occurrences);
   const rootOccurrence = rootOccurrenceFor(rootNode, {
     size: metadata.size,
-    executable: (metadata.mode & 0o111) !== 0,
+    executable: hostExecutableMarking(path, metadata),
     format: rootFormat,
     path,
   });
@@ -179,7 +246,13 @@ const buildInventorySnapshot = async (
     ordinal,
   }));
 
-  await verifyRootDigest(path, rootDigest, signal);
+  await verifyRootDigest(
+    path,
+    rootDigest,
+    rootSource,
+    input.resourceScope,
+    signal,
+  );
 
   const graphSha256 = artifactGraphDigest({
     nodes: orderedNodes,
@@ -195,6 +268,12 @@ const buildInventorySnapshot = async (
     orderedOccurrences,
     orderedEdges,
   });
+  const assessment = inventoryAssessment(
+    rootFormat,
+    reader,
+    integrityContradictions,
+    input.caseCollisionLimitation,
+  );
   return {
     manifest,
     nodes: orderedNodes,
@@ -202,7 +281,8 @@ const buildInventorySnapshot = async (
     edges: orderedEdges,
     provenance: reader?.provenance() ?? [],
     integrity_contradictions: integrityContradictions,
-    limitations: buildLimitations(rootFormat, reader, integrityContradictions),
+    coverage_status: assessment.coverage_status,
+    limitations: assessment.limitations,
   };
 };
 
@@ -249,10 +329,20 @@ const buildIntegrityContradictions = (
 const verifyRootDigest = async (
   path: string,
   rootDigest: HashResult | null,
+  rootSource: RootInventorySource | undefined,
+  resourceScope: ArtifactInventoryOptions["resourceScope"],
   signal: AbortSignal | undefined,
 ): Promise<void> => {
   if (rootDigest === null) return;
-  const verified = await hashStableRootArtifact(path, signal);
+  const verified =
+    rootSource === undefined
+      ? await hashStableRootArtifact(path, resourceScope, signal)
+      : await hashStableRootArtifactHandle(
+          path,
+          rootSource.handle,
+          rootSource.initial,
+          signal,
+        );
   if (
     verified.sha256 !== rootDigest.sha256 ||
     verified.bytes !== rootDigest.bytes
@@ -305,16 +395,3 @@ const buildManifest = ({
     occurrence_count: orderedOccurrences.length,
     edge_count: orderedEdges.length,
   });
-
-const buildLimitations = (
-  rootFormat: ArtifactOccurrence["artifact_format"],
-  reader: ArtifactReader | undefined,
-  integrityContradictions: readonly IntegrityContradiction[],
-): string[] => [
-  ...inventoryLimitations(rootFormat, reader),
-  ...(integrityContradictions.length === 0
-    ? []
-    : [
-        `${String(integrityContradictions.length)} integrity contradiction(s) were recorded; mismatched content is observed-untrusted.`,
-      ]),
-];

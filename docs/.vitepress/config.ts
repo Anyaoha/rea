@@ -17,6 +17,7 @@ export default defineConfig({
         text: "Getting started",
         items: [
           { text: "Installation and setup", link: "/installation" },
+          { text: "Client configuration", link: "/client-configuration" },
           { text: "CLI and Evidence", link: "/cli" },
           { text: "Agent prompts", link: "/mcp-prompts" },
           { text: "Roadmap", link: "/roadmap" },
@@ -26,6 +27,7 @@ export default defineConfig({
         text: "Investigation guides",
         items: [
           { text: "Native binaries", link: "/native-investigation" },
+          { text: "Go build metadata", link: "/go-binaries" },
           {
             text: "JavaScript and Electron",
             link: "/javascript-artifact-reconstruction",
@@ -41,10 +43,9 @@ export default defineConfig({
           { text: "Android applications", link: "/android-analysis" },
           { text: "Apple applications", link: "/apple-application-analysis" },
           { text: "Firmware", link: "/firmware-analysis" },
-          {
-            text: "Reconstruction readiness",
-            link: "/reconstruction-readiness",
-          },
+          { text: "SQLite databases", link: "/sqlite-databases" },
+          { text: "Packet captures", link: "/packet-captures" },
+          { text: "Signal recordings", link: "/signal-recordings" },
         ],
       },
       {
@@ -54,6 +55,7 @@ export default defineConfig({
           { text: "IDA", link: "/ida-provider" },
           { text: "Ghidra on Windows", link: "/windows-ghidra-p0" },
           { text: "Ghidra DOS analysis", link: "/ghidra-dos" },
+          { text: "Ghidra raw binary", link: "/raw-binary" },
           { text: "Ghidra NativeAOT", link: "/ghidra-nativeaot" },
           { text: "Ghidra semantics", link: "/ghidra-provider" },
         ],
@@ -65,6 +67,11 @@ export default defineConfig({
           { text: "MCP contracts", link: "/mcp-contracts" },
           { text: "Tool design", link: "/tool-design" },
           { text: "Testing", link: "/testing" },
+          { text: "Client verification", link: "/client-verification" },
+          {
+            text: "Reconstruction readiness",
+            link: "/reconstruction-readiness",
+          },
           { text: "Releasing", link: "/releasing" },
         ],
       },

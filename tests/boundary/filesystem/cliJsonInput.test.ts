@@ -7,8 +7,9 @@ import { describe, expect, it, onTestFinished } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
 import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
-import { readCliJsonFile } from "../../../src/cliJsonFile.js";
+import { readJsonInputFile } from "../../../src/application/JsonInputFile.js";
 import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -160,6 +161,21 @@ describe("CLI JSON streamed input", () => {
     }
   });
 
+  it("names a leading byte-order mark in small and streamed files", async () => {
+    const root = await createTestTempDirectory("rea-json-input-bom-");
+    const path = join(root, "input.json");
+    for (const body of ["{}", `${" ".repeat(9 * 1024 * 1024)}{}`]) {
+      await writeFile(path, `\uFEFF${body}`);
+      expect(await parseCliJsonInput(path, "test-input")).toMatchObject({
+        ok: false,
+        error: {
+          input_reason: "invalid-json",
+          details: { issues: [{ message: JSON_BYTE_ORDER_MARK_MESSAGE }] },
+        },
+      });
+    }
+  });
+
   it.each([Buffer.from([0xf0, 0x28, 0x8c, 0xbc]), Buffer.from([0xe2, 0x82])])(
     "rejects malformed and incomplete UTF-8 at a read boundary (%j)",
     async (invalid) => {
@@ -187,11 +203,11 @@ describe("CLI JSON streamed input", () => {
     const path = join(root, "input.json");
     await writeFile(path, `${" ".repeat(9 * 1024 * 1024)}{"after":true}`);
     const controller = new AbortController();
-    const cancelled = readCliJsonFile(path, "test-input", controller.signal);
+    const cancelled = readJsonInputFile(path, "test-input", controller.signal);
     setImmediate(() => controller.abort(new Error("cancel JSON file parse")));
     await expect(cancelled).rejects.toThrow("cancel JSON file parse");
     await writeFile(path, '{"after":true}');
-    expect(await readCliJsonFile(path, "test-input")).toEqual({
+    expect(await readJsonInputFile(path, "test-input")).toEqual({
       ok: true,
       value: { after: true },
     });

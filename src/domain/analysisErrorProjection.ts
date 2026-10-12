@@ -1,4 +1,5 @@
 import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
+import { isImmutableJsonSnapshot } from "./immutableJson.js";
 
 import {
   analysisErrorCategory,
@@ -39,10 +40,7 @@ import { ProviderAdapterError } from "./providerAdapterError.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
 import { providerRetryAction } from "./providerOperationHealth.js";
-import {
-  type AnalysisError,
-  type AnalysisErrorTag,
-} from "./analysisErrorBase.js";
+import type { AnalysisError, AnalysisErrorTag } from "./analysisErrorBase.js";
 
 /** Project expected failures into exhaustive, secret-safe caller fields. */
 export const projectAnalysisError = (
@@ -54,6 +52,9 @@ export const projectAnalysisError = (
   const primaryDetails = errorDetails(error);
   const details = {
     ...primaryDetails,
+    ...(error.diagnostics === undefined
+      ? {}
+      : { diagnostics: error.diagnostics }),
     ...(error.cleanupIncomplete
       ? {
           cleanup: "incomplete",
@@ -71,14 +72,20 @@ export const projectAnalysisError = (
     ...(error.partialObservation === undefined
       ? {}
       : {
-          partial_observation: jsonValueSchema.parse(error.partialObservation),
+          partial_observation: isImmutableJsonSnapshot(error.partialObservation)
+            ? error.partialObservation
+            : jsonValueSchema.parse(error.partialObservation),
         }),
   };
   return {
     code,
     category: analysisErrorCategory(error),
     message: analysisErrorUserMessage(error),
-    retryable: RETRYABLE_CODES.has(code),
+    retryable:
+      RETRYABLE_CODES.has(code) ||
+      (code === "resource_constraint" &&
+        error instanceof AnalysisResourceConstraintError &&
+        error.resource === "capacity"),
     remediation: {
       action: analysisErrorRemediationAction(error),
     },
@@ -105,9 +112,11 @@ const underlyingErrorCode = (
   if (error instanceof ArtifactOperationError)
     return artifactOperationCode(error);
   if (error instanceof BinaryTargetError)
-    return error.systemCode === undefined
-      ? "target_unavailable"
-      : "access_denied";
+    return error.constraint === "load_selection_rejected"
+      ? "invalid_request"
+      : error.systemCode === undefined
+        ? "target_unavailable"
+        : "access_denied";
   if (error instanceof EvidenceFileError) return evidenceFileCode(error.reason);
   if (error instanceof UnknownRegistryError)
     return unknownRegistryCode(error.reason);
@@ -309,6 +318,13 @@ const artifactStateErrorDetails = (
       operation: error.operation,
       reason: error.reason,
       ...(error.path === undefined ? {} : { path: error.path }),
+      ...(error.published === undefined
+        ? {}
+        : {
+            published: true,
+            bytes: error.published.bytes,
+            published_path: error.published.path,
+          }),
     };
   return undefined;
 };
@@ -345,9 +361,6 @@ const providerErrorDetails = (
             resources: [...error.cleanupResources],
           }
         : {}),
-      ...(error.diagnostics === undefined
-        ? {}
-        : { diagnostics: error.diagnostics }),
     };
   if (error instanceof BrowserObservationError) {
     const primaryReason = primaryBrowserFailureReason(error);

@@ -25,6 +25,10 @@ export const TOOL_KINDS = [
   "artifact-provider",
   "managed-provider",
   "android-provider",
+  "apktool-provider",
+  "flutter-provider",
+  "jeb-provider",
+  "adb-provider",
   "firmware-provider",
   "browser-provider",
   "electron-provider",
@@ -54,5 +58,10 @@ export interface ToolContract<
   readonly outputSchema: OutputSchema;
   readonly effects: ToolEffects;
   readonly annotations: ToolAnnotations;
+  /**
+   * Results, successful or failed, can contain text that originates from the
+   * analysis target. MCP delivery marks such results as untrusted data.
+   */
+  readonly returnsTargetContent: boolean;
   readonly examples: readonly ToolExample[];
 }

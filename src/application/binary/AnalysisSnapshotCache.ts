@@ -7,7 +7,9 @@ import {
   AnalysisSnapshotMismatchError,
 } from "../../domain/evidenceErrors.js";
 import { NoBinaryOpenError } from "../../domain/configurationErrors.js";
-import { type AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { rebindEvidenceSubjectTargetPath } from "../../domain/evidence.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   analysisQueryId,
@@ -18,6 +20,7 @@ import {
   snapshotMatchesTarget,
   snapshotTarget,
   parseAnalysisSnapshot,
+  immutableAnalysisSnapshot,
   type AnalysisSnapshot,
   type AnalysisSnapshotEntry,
   type AnalysisSnapshotWorkflowEntry,
@@ -31,6 +34,11 @@ import type {
 } from "../AnalysisProvider.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../contracts/officialToolContracts.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
+
+const RELATIONSHIP_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
+  "procedure_callers",
+  "procedure_callees",
+]);
 
 const STATEFUL_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
   "health",
@@ -107,6 +115,7 @@ export class AnalysisSnapshotCache {
 
   /** Merge already-validated entries and return the new-entry count. */
   stage(snapshot: AnalysisSnapshot): number {
+    snapshot = immutableAnalysisSnapshot(snapshot);
     if (
       (this.#target !== undefined &&
         JSON.stringify(this.#target) !== JSON.stringify(snapshot.target)) ||
@@ -123,12 +132,12 @@ export class AnalysisSnapshotCache {
     for (const entry of snapshot.entries) {
       if (!this.#entries.has(entry.query_id) && !this.#hasCapacity()) continue;
       if (!this.#entries.has(entry.query_id)) imported += 1;
-      this.#entries.set(entry.query_id, structuredClone(entry));
+      this.#entries.set(entry.query_id, entry);
     }
     for (const entry of snapshot.workflow_entries) {
       if (!this.#workflowEntries.has(entry.query_id) && !this.#hasCapacity())
         continue;
-      this.#workflowEntries.set(entry.query_id, structuredClone(entry));
+      this.#workflowEntries.set(entry.query_id, entry);
     }
     return imported;
   }
@@ -182,11 +191,11 @@ export class AnalysisSnapshotCache {
       | undefined,
     mergeEvidence: (
       bundle: EvidenceBundle,
-    ) => Result<number, EvidenceIntegrityError>,
+    ) => Result<number, EvidenceIntegrityError | AnalysisInputError>,
   ): Result<number, AnalysisError> {
     let validated: AnalysisSnapshot;
     try {
-      validated = parseAnalysisSnapshot(snapshot);
+      validated = immutableAnalysisSnapshot(snapshot);
     } catch (cause: unknown) {
       return err(
         new EvidenceIntegrityError("Analysis snapshot validation failed", {
@@ -238,6 +247,7 @@ export class AnalysisSnapshotCache {
       readonly provider: AnalysisExecution["provider"];
       readonly analysisProfile: AnalysisProfileCommitment;
       readonly limitations: readonly string[];
+      readonly relationshipCoverage?: AnalysisExecution["relationshipCoverage"];
       readonly locations: AnalysisExecution["locations"];
       readonly subject: AnalysisExecution["subject"];
     };
@@ -275,7 +285,21 @@ export class AnalysisSnapshotCache {
     );
     const cached = this.#entries.get(queryId);
     if (cached === undefined) return undefined;
-    const subject = cached.execution.subject;
+    const cachedSubject = cached.execution.subject;
+    const subject =
+      cachedSubject === null
+        ? null
+        : rebindEvidenceSubjectTargetPath(
+            {
+              path: cachedSubject.path,
+              sha256: cachedSubject.sha256,
+              format: cachedSubject.format,
+              ...(cachedSubject.architecture === null
+                ? {}
+                : { architecture: cachedSubject.architecture }),
+            },
+            target,
+          );
     return structuredClone({
       result: cached.execution.result,
       rawResult: cached.execution.raw_result,
@@ -285,22 +309,21 @@ export class AnalysisSnapshotCache {
         ...cached.execution.limitations,
         "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
       ],
+      ...(cached.execution.relationship_coverage === null &&
+      RELATIONSHIP_OPERATIONS.has(operation)
+        ? {
+            relationshipCoverage: {
+              status: "unknown",
+              reason: "Snapshot entry does not report relationship coverage.",
+            },
+          }
+        : cached.execution.relationship_coverage === null
+          ? {}
+          : {
+              relationshipCoverage: cached.execution.relationship_coverage,
+            }),
       locations: cached.execution.locations,
-      subject:
-        subject === null
-          ? null
-          : subject.architecture === null
-            ? {
-                path: subject.path,
-                sha256: subject.sha256,
-                format: subject.format,
-              }
-            : {
-                path: subject.path,
-                sha256: subject.sha256,
-                format: subject.format,
-                architecture: subject.architecture,
-              },
+      subject,
     });
   }
 

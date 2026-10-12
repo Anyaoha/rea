@@ -1,11 +1,13 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
@@ -13,11 +15,38 @@ import { javaScriptExportShapeComparisonResultSchema } from "../../../src/domain
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
+const requireFixture = createRequire(import.meta.url);
 const comparisonEnvelope = z.object({
   normalized_result: javaScriptExportShapeComparisonResultSchema,
 });
+const applicationEnvelope = z.object({
+  normalized_result: javascriptApplicationAnalysisResultSchema,
+});
+// Source semantics use the real stdio workflow throughout the matrix. The
+// missing-export and count-change cases also check compiled CLI adapter parity.
+let mcpConnection:
+  | {
+      readonly client: Client;
+      readonly transport: StdioClientTransport;
+      readonly ready: Promise<void>;
+    }
+  | undefined;
 
-describe("exported function binding resolution through the CLI", () => {
+afterAll(async () => {
+  if (mcpConnection === undefined) return;
+  try {
+    await mcpConnection.ready;
+  } catch {
+    // Keep the failed connection owned until both resources are closed below.
+  }
+  try {
+    await mcpConnection.client.close();
+  } finally {
+    await mcpConnection.transport.close();
+  }
+});
+
+describe("exported function binding resolution through stdio MCP and CLI", () => {
   it.each([
     {
       name: "a function declaration exported by a specifier",
@@ -77,7 +106,7 @@ describe("exported function binding resolution through the CLI", () => {
     async ({ source, exportName }) => {
       const fixture = await analyzeVersions(source, exportName);
       await expectRuntimeExports(fixture, (count) => ({ count }));
-      const result = await compareThroughCli(fixture);
+      const result = await compareThroughMcp(fixture.input);
       expectUncertainComparison(result);
       for (const evidence of [fixture.input.left, fixture.input.right]) {
         const { normalized_result: analysis } = z
@@ -98,7 +127,7 @@ describe("exported function binding resolution through the CLI", () => {
     },
   );
 
-  it("does not associate a private function name with a numeric export in CLI or MCP", async () => {
+  it("does not associate a private function name with a numeric export through stdio MCP", async () => {
     const fixture = await analyzeVersions(
       (count) =>
         `const hidden = function current() { return { count: 0 }; };
@@ -107,13 +136,288 @@ describe("exported function binding resolution through the CLI", () => {
       "default",
     );
     await expectRuntimeExports(fixture, (count) => count);
-    const cli = await compareThroughCli(fixture);
-    expectUncertainComparison(cli);
-    expect(await compareThroughMcp(fixture.input)).toEqual(cli);
+    const comparison = await compareThroughMcp(fixture.input);
+    expectUncertainComparison(comparison);
+  });
+
+  it("does not treat rebinding the CommonJS exports alias as a default export", async () => {
+    const fixture = await analyzeVersions(
+      (count) =>
+        `exports = function parse() { return { kind: "result", count: ${String(count)} }; };`,
+      "default",
+      "app.cjs",
+    );
+
+    // This is a test-owned fixture, so Node's actual CommonJS loader is the
+    // oracle for what the application exports.
+    expect(requireFixture(fixture.leftPath)).toEqual({});
+    expect(requireFixture(fixture.rightPath)).toEqual({});
+
+    const mcp = await compareThroughMcp(fixture.input);
+    await expectCliAnalysisParity(fixture);
+    expect(mcp).toMatchObject({
+      left: { status: "missing" },
+      right: { status: "missing" },
+      summary: { added: 0, removed: 0, changed: 0 },
+    });
+    expect(await compareThroughCli(fixture)).toEqual(mcp);
+  });
+
+  it.each([
+    ["the CommonJS exports alias", "exports"],
+    ["an ordinary object property", "holder.value"],
+  ])(
+    "resolves exported callable values through = chains ending at %s",
+    async (_, target) => {
+      const fixture = await analyzeVersions(
+        (count) =>
+          `const holder = {};\nfunction parse() { return { kind: "result", count: ${String(count)} }; }\nmodule.exports = ${target} = parse;`,
+        "default",
+        "app.cjs",
+      );
+      expect(requireFixture(fixture.leftPath)()).toEqual({
+        kind: "result",
+        count: 1,
+      });
+      expect(requireFixture(fixture.rightPath)()).toEqual({
+        kind: "result",
+        count: 2,
+      });
+      for (const evidence of [fixture.input.left, fixture.input.right])
+        expectExportedCallableBinding(evidence, "parse");
+      const comparison = await compareThroughMcp(fixture.input);
+      expectCountChange(comparison);
+      if (target === "exports") {
+        await expectCliAnalysisParity(fixture);
+        expect(await compareThroughCli(fixture)).toEqual(comparison);
+      }
+    },
+  );
+});
+
+describe("CommonJS assignment-chain receiver identity through stdio MCP", () => {
+  it("does not export a named write whose captured module.exports receiver is replaced", async () => {
+    const fixture = await analyzeVersions(
+      (count) =>
+        `const VERSION = ${String(count)};\nmodule.exports.parse = (module.exports = () => ({ count: VERSION }));`,
+      "parse",
+      "app.cjs",
+    );
+    for (const path of [fixture.leftPath, fixture.rightPath]) {
+      const value = requireFixture(path);
+      expect(typeof value).toBe("function");
+      expect(Reflect.ownKeys(value)).toEqual(["length", "name"]);
+    }
+    for (const evidence of [fixture.input.left, fixture.input.right]) {
+      const analysis = z
+        .object({
+          normalized_result: javascriptApplicationAnalysisResultSchema,
+        })
+        .parse(evidence).normalized_result;
+      expect(
+        analysis.graph.nodes
+          .flatMap(({ observations }) => observations)
+          .filter(
+            ({ properties }) =>
+              properties.semantic_role === "export-binding" &&
+              properties.exported_name === "parse",
+          ),
+      ).toEqual([]);
+    }
+    const comparison = await compareThroughMcp(fixture.input);
+    expect(comparison).toMatchObject({
+      left: { status: "missing" },
+      right: { status: "missing" },
+      summary: { added: 0, removed: 0, changed: 0 },
+    });
+  });
+
+  it("keeps a named property export when its receiver remains stable through the RHS chain", async () => {
+    const fixture = await analyzeVersions(
+      (count) =>
+        `const holder = {};\nfunction parse() { return { kind: "result", count: ${String(count)} }; }\nmodule.exports.parse = holder.value = parse;`,
+      "parse",
+      "app.cjs",
+    );
+    for (const path of [fixture.leftPath, fixture.rightPath])
+      expect(requireFixture(path).parse()).toEqual({
+        kind: "result",
+        count: path === fixture.leftPath ? 1 : 2,
+      });
+    const comparison = await compareThroughMcp(fixture.input);
+    expectCountChange(comparison);
+  });
+
+  it("keeps receiver identity unresolved when module.exports is reassigned to the same function", async () => {
+    const fixture = await analyzeVersions(
+      (count) =>
+        `const VERSION = ${String(count)};\nfunction parse() { return { count: VERSION }; }\nmodule.exports = parse;\nmodule.exports.parse = (module.exports = parse);`,
+      "parse",
+      "app.cjs",
+    );
+    for (const path of [fixture.leftPath, fixture.rightPath]) {
+      const value = requireFixture(path);
+      expect(value.parse).toBe(value);
+      expect(value.parse()).toEqual({
+        count: path === fixture.leftPath ? 1 : 2,
+      });
+    }
+    for (const evidence of [fixture.input.left, fixture.input.right])
+      expectUnresolvedExportBinding(evidence, "parse");
+    const comparison = await compareThroughMcp(fixture.input);
+    expect(comparison).toMatchObject({
+      left: { status: "unavailable" },
+      right: { status: "unavailable" },
+    });
+  });
+
+  it("keeps receiver replacement by an existing function unresolved", async () => {
+    const fixture = await analyzeVersions(
+      (count) =>
+        `const VERSION = ${String(count)};\nfunction parse() { return { count: VERSION }; }\nmodule.exports.parse = (module.exports = parse);`,
+      "parse",
+      "app.cjs",
+    );
+    for (const path of [fixture.leftPath, fixture.rightPath]) {
+      const value = requireFixture(path);
+      expect(typeof value).toBe("function");
+      expect(value.parse).toBeUndefined();
+      expect(value()).toEqual({
+        count: path === fixture.leftPath ? 1 : 2,
+      });
+    }
+    for (const evidence of [fixture.input.left, fixture.input.right])
+      expectUnresolvedExportBinding(evidence, "parse");
+    const comparison = await compareThroughMcp(fixture.input);
+    expect(comparison).toMatchObject({
+      left: { status: "unavailable" },
+      right: { status: "unavailable" },
+    });
+  });
+
+  it("resolves a nested lexical parse binding in an ordinary module.exports chain", async () => {
+    const fixture = await analyzeVersions(
+      (count) =>
+        `function parse() { return { count: VERSION }; }\nfunction configure() { const parse = () => ({ count: 7 }); let local; module.exports = local = parse; }\nconst VERSION = ${String(count)};\nconfigure();`,
+      "default",
+      "app.cjs",
+    );
+    for (const path of [fixture.leftPath, fixture.rightPath])
+      expect(requireFixture(path)()).toEqual({ count: 7 });
+    for (const evidence of [fixture.input.left, fixture.input.right])
+      expectExportedCallableBinding(evidence, "parse");
+    const comparison = await compareThroughMcp(fixture.input);
+    expect(comparison).toMatchObject({
+      summary: { added: 0, removed: 0, changed: 0, unknown: 0 },
+      changes: [],
+    });
   });
 });
 
-describe("stable exported function bindings through the CLI", () => {
+describe("CommonJS export identity and scope regressions", () => {
+  it("does not export a named write through the original exports alias after replacement", async () => {
+    const fixture = await analyzeVersions(
+      (count) =>
+        `const VERSION = ${String(count)};\nexports.parse = (module.exports = () => ({ count: VERSION }));`,
+      "parse",
+      "app.cjs",
+    );
+    for (const path of [fixture.leftPath, fixture.rightPath]) {
+      const value = requireFixture(path);
+      expect(typeof value).toBe("function");
+      expect(Reflect.ownKeys(value)).toEqual(["length", "name"]);
+    }
+    const comparison = await compareThroughMcp(fixture.input);
+    expect(comparison).toMatchObject({
+      left: { status: "missing" },
+      right: { status: "missing" },
+      summary: { added: 0, removed: 0, changed: 0 },
+    });
+  });
+
+  it("keeps a dead var shadow of the alias-chain RHS unavailable", async () => {
+    const fixture = await analyzeVersions(
+      (count) =>
+        `function parse() { return { count: ${String(count)} }; }\nfunction configure() { if (false) { var parse = () => ({ count: 7 }); } module.exports = exports = parse; }\nconfigure();`,
+      "default",
+      "app.cjs",
+    );
+    expect(requireFixture(fixture.leftPath)).toBeUndefined();
+    expect(requireFixture(fixture.rightPath)).toBeUndefined();
+    const comparison = await compareThroughMcp(fixture.input);
+    expectUncertainComparison(comparison);
+  });
+
+  it.each(["+=", "||=", "??="] as const)(
+    "does not treat module.exports %s as a definite function export",
+    async (operator) => {
+      const fixture = await analyzeVersions(
+        (count) =>
+          `module.exports ${operator} (() => ({ kind: "result", count: ${String(count)} }));`,
+        "default",
+        "app.cjs",
+      );
+      const left = requireFixture(fixture.leftPath);
+      const right = requireFixture(fixture.rightPath);
+      if (operator === "+=") {
+        expect(typeof left).toBe("string");
+        expect(typeof right).toBe("string");
+      } else {
+        expect(left).toEqual({});
+        expect(right).toEqual({});
+      }
+      const comparison = await compareThroughMcp(fixture.input);
+      expectUncertainComparison(comparison);
+    },
+  );
+
+  it("keeps a parameter-default mutation unknown in a CommonJS return shape", async () => {
+    const fixture = await analyzeVersions(
+      (count) =>
+        `const source = { value: 0 }; module.exports = exports = function current(arg = null, set = (arg = source)) { var arg; arg.value = ${String(count)}; return { kind: "result", count: source.value }; };`,
+      "default",
+      "app.cjs",
+    );
+    expect(requireFixture(fixture.leftPath)()).toEqual({
+      kind: "result",
+      count: 1,
+    });
+    expect(requireFixture(fixture.rightPath)()).toEqual({
+      kind: "result",
+      count: 2,
+    });
+    for (const evidence of [fixture.input.left, fixture.input.right]) {
+      const analysis = z
+        .object({
+          normalized_result: javascriptApplicationAnalysisResultSchema,
+        })
+        .parse(evidence).normalized_result;
+      const shapes = analysis.graph.nodes
+        .flatMap(({ observations }) => observations)
+        .find(
+          ({ properties }) =>
+            properties.semantic_role === "export-return-shapes" &&
+            properties.exported_name === "default",
+        )?.properties.static_return_shapes;
+      expect(shapes).toEqual([
+        expect.objectContaining({
+          fields: expect.arrayContaining([
+            expect.objectContaining({ path: "/count", state: "unknown" }),
+          ]),
+        }),
+      ]);
+    }
+    const comparison = await compareThroughMcp(fixture.input);
+    expect(comparison).toMatchObject({
+      left: { status: "selected" },
+      right: { status: "selected" },
+      summary: { added: 0, removed: 0, changed: 0 },
+      changes: [],
+    });
+  });
+});
+
+describe("stable exported function bindings through stdio MCP", () => {
   it.each([
     {
       name: "an anonymous default",
@@ -156,7 +460,7 @@ describe("stable exported function bindings through the CLI", () => {
     },
   ])("retains exact comparison for $name", async ({ source }) => {
     const fixture = await analyzeVersions(source, "default");
-    expectCountChange(await compareThroughCli(fixture));
+    expectCountChange(await compareThroughMcp(fixture.input));
   });
 });
 
@@ -177,7 +481,7 @@ describe("export bindings with loop and assignment-only writes", () => {
       return `${statement} export { current as default };`;
     }, "default");
     await expectRuntimeExports(fixture, () => undefined);
-    expectUncertainComparison(await compareThroughCli(fixture));
+    expectUncertainComparison(await compareThroughMcp(fixture.input));
   });
 
   it("retains a var initializer in an unconditional nested block", async () => {
@@ -188,7 +492,7 @@ describe("export bindings with loop and assignment-only writes", () => {
       "default",
     );
     await expectRuntimeExports(fixture, (count) => ({ kind: "result", count }));
-    expectCountChange(await compareThroughCli(fixture));
+    expectCountChange(await compareThroughMcp(fixture.input));
   });
 
   it.each([
@@ -212,7 +516,7 @@ describe("export bindings with loop and assignment-only writes", () => {
       "app.cjs",
     );
     await expectRuntimeExports(fixture, (count) => ({ count }));
-    expectUncertainComparison(await compareThroughCli(fixture));
+    expectUncertainComparison(await compareThroughMcp(fixture.input));
   });
 
   it("does not associate a for-in key with the overwritten function", async () => {
@@ -225,7 +529,7 @@ describe("export bindings with loop and assignment-only writes", () => {
       "app.cjs",
     );
     await expectRuntimeExports(fixture, String);
-    expectUncertainComparison(await compareThroughCli(fixture));
+    expectUncertainComparison(await compareThroughMcp(fixture.input));
   });
 
   it("preserves an outer export shadowed by a lexical loop declaration", async () => {
@@ -236,7 +540,7 @@ describe("export bindings with loop and assignment-only writes", () => {
       "current",
     );
     await expectRuntimeExports(fixture, (count) => ({ kind: "result", count }));
-    expectCountChange(await compareThroughCli(fixture));
+    expectCountChange(await compareThroughMcp(fixture.input));
   });
 
   it.each([
@@ -269,9 +573,8 @@ describe("export bindings with loop and assignment-only writes", () => {
   ])("does not infer $name from its only assignment", async ({ source }) => {
     const fixture = await analyzeVersions(source, "default", "app.cjs");
     await expectRuntimeExports(fixture, (count) => count);
-    const cli = await compareThroughCli(fixture);
-    expectUncertainComparison(cli);
-    expect(await compareThroughMcp(fixture.input)).toEqual(cli);
+    const comparison = await compareThroughMcp(fixture.input);
+    expectUncertainComparison(comparison);
   });
 });
 
@@ -293,7 +596,7 @@ describe("export binding lexical scope and declaration order", () => {
   ])("keeps $name uncertain", async ({ source }) => {
     const fixture = await analyzeVersions(source, "current");
     await expectRuntimeExports(fixture, (count) => ({ count }));
-    expectUncertainComparison(await compareThroughCli(fixture));
+    expectUncertainComparison(await compareThroughMcp(fixture.input));
   });
 
   it("does not let a later local declaration contaminate the exported outer binding", async () => {
@@ -308,7 +611,7 @@ describe("export binding lexical scope and declaration order", () => {
       "current",
     );
     await expectRuntimeExports(fixture, (count) => ({ kind: "result", count }));
-    expectCountChange(await compareThroughCli(fixture));
+    expectCountChange(await compareThroughMcp(fixture.input));
   });
 
   it("does not associate a nested CommonJS numeric export with an outer function", async () => {
@@ -321,9 +624,8 @@ describe("export binding lexical scope and declaration order", () => {
       "app.cjs",
     );
     await expectRuntimeExports(fixture, (count) => count);
-    const cli = await compareThroughCli(fixture);
-    expectUncertainComparison(cli);
-    expect(await compareThroughMcp(fixture.input)).toEqual(cli);
+    const comparison = await compareThroughMcp(fixture.input);
+    expectUncertainComparison(comparison);
   });
 
   it.each([
@@ -347,7 +649,7 @@ describe("export binding lexical scope and declaration order", () => {
   ])("compares $name through its real CommonJS binding", async ({ source }) => {
     const fixture = await analyzeVersions(source, "default", "app.cjs");
     await expectRuntimeExports(fixture, (count) => ({ kind: "result", count }));
-    expectCountChange(await compareThroughCli(fixture));
+    expectCountChange(await compareThroughMcp(fixture.input));
   });
 });
 
@@ -452,7 +754,7 @@ describe("export writes in function evaluation contexts", () => {
   ])("keeps an outer export write in $name uncertain", async ({ source }) => {
     const fixture = await analyzeVersions(source, "current");
     await expectRuntimeExports(fixture, (count) => ({ count }));
-    expectUncertainComparison(await compareThroughCli(fixture));
+    expectUncertainComparison(await compareThroughMcp(fixture.input));
   });
 
   it("resolves a CommonJS export in a parameter default outside the function body", async () => {
@@ -465,8 +767,175 @@ describe("export writes in function evaluation contexts", () => {
       "app.cjs",
     );
     await expectRuntimeExports(fixture, (count) => ({ kind: "result", count }));
-    expectCountChange(await compareThroughCli(fixture));
+    expectCountChange(await compareThroughMcp(fixture.input));
   });
+});
+
+it("retains namespace re-export bindings and provenance through stdio MCP and CLI", async () => {
+  const root = await createTestTempDirectory("rea-namespace-reexports-");
+  const declarations = [
+    { clause: "* as ns", name: "ns", imported: "*" },
+    {
+      clause: '* as "namespace value"',
+      name: "namespace value",
+      imported: "*",
+    },
+    { clause: "{ value as forwarded }", name: "forwarded", imported: "value" },
+    { clause: "*", name: "*", imported: "*" },
+  ];
+  const source = declarations
+    .map(({ clause }) => `export ${clause} from "./dependency.mjs";`)
+    .join("\n");
+  const path = join(root, "barrel.mjs");
+  await Promise.all([
+    writeFile(path, source),
+    writeFile(join(root, "dependency.mjs"), "export const value = 42;"),
+  ]);
+  // Node executes only this test-owned fixture to establish its actual exports.
+  for (const name of ["ns", "namespace value"])
+    expect(await runtimeExport(path, name)).toEqual({ value: 42 });
+  for (const name of ["forwarded", "value"])
+    expect(await runtimeExport(path, name)).toBe(42);
+
+  const documents = [
+    await analyzeThroughMcp(root),
+    await runCli(["analyze-javascript-application", root, "--json"]),
+  ];
+  const digest = createHash("sha256").update(source).digest("hex");
+  for (const document of documents) {
+    const { graph } = applicationEnvelope.parse(document).normalized_result;
+    const sourceModule = graph.nodes.find(({ observations }) =>
+      observations.some(
+        ({ properties }) =>
+          properties.semantic_role === "source-module" &&
+          properties.path === "barrel.mjs",
+      ),
+    );
+    expect(sourceModule?.observations[0]?.properties).toMatchObject({
+      export_relationships: 4,
+      export_names: ["*", "forwarded", "namespace value", "ns"],
+      omitted_export_names: 0,
+    });
+    for (const [index, { clause, name, imported }] of declarations.entries()) {
+      const exported = graph.nodes.find(({ observations }) =>
+        observations.some(
+          ({ properties }) =>
+            properties.semantic_role === "export-binding" &&
+            properties.module_path === "barrel.mjs" &&
+            properties.exported_name === name,
+        ),
+      );
+      const observation = exported?.observations[0];
+      expect(observation?.properties).toMatchObject({
+        relationship_kind: "re-export",
+        declared_specifier: "./dependency.mjs",
+        imported_name: imported,
+        local_name: null,
+      });
+      if (imported === "*" && name !== "*")
+        expect(observation?.evidence).toMatchObject({
+          artifact: { available: true, sha256: digest },
+          location: {
+            available: true,
+            value: {
+              kind: "source-range",
+              source: "barrel.mjs",
+              start: { line: index + 1, column: 7 },
+              end: { line: index + 1, column: 7 + clause.length },
+            },
+          },
+        });
+      expect(graph.edges).toContainEqual(
+        expect.objectContaining({
+          source_node_id: sourceModule?.node_id,
+          target_node_id: exported?.node_id,
+          relation: "exposes",
+          properties: expect.objectContaining({ exported_name: name }),
+          evidence: expect.objectContaining({
+            artifact: observation?.evidence.artifact,
+            location: observation?.evidence.location,
+          }),
+        }),
+      );
+      expect(graph.edges).toContainEqual(
+        expect.objectContaining({
+          source_node_id: exported?.node_id,
+          relation: "imports",
+          properties: expect.objectContaining({
+            module_link_kind: "re-export",
+            imported_name: imported,
+            exported_name: name,
+            resolved_path: "dependency.mjs",
+            resolution_status: "resolved",
+          }),
+        }),
+      );
+    }
+    expect(graph.coverage).toMatchObject({
+      status: "complete",
+      omitted_count: 0,
+      truncated: false,
+    });
+  }
+});
+
+it("excludes erased namespace type exports through stdio MCP and CLI", async () => {
+  const root = await createTestTempDirectory("rea-namespace-type-exports-");
+  const path = join(root, "barrel.mts");
+  await Promise.all([
+    writeFile(
+      path,
+      'export type * as Types from "./types.mjs";\nexport * as Values from "./values.mjs";',
+    ),
+    writeFile(
+      join(root, "types.mjs"),
+      'throw new Error("Type-only dependency must not execute");',
+    ),
+    writeFile(join(root, "values.mjs"), "export const value = 42;"),
+  ]);
+  // Node strips the type-only declaration without loading its throwing target.
+  expect(await runtimeExport(path, "Types")).toBeUndefined();
+  expect(await runtimeExport(path, "Values")).toEqual({ value: 42 });
+
+  const documents = [
+    await analyzeThroughMcp(root),
+    await runCli(["analyze-javascript-application", root, "--json"]),
+  ];
+  for (const document of documents) {
+    const { graph } = applicationEnvelope.parse(document).normalized_result;
+    const observations = graph.nodes.flatMap(
+      ({ observations }) => observations,
+    );
+    expect(
+      observations.find(
+        ({ properties }) =>
+          properties.semantic_role === "source-module" &&
+          properties.path === "barrel.mts",
+      )?.properties,
+    ).toMatchObject({
+      export_relationships: 1,
+      export_names: ["Values"],
+      omitted_export_names: 0,
+    });
+    expect(
+      observations.filter(
+        ({ properties }) =>
+          properties.semantic_role === "export-binding" &&
+          properties.module_path === "barrel.mts" &&
+          properties.exported_name === "Types",
+      ),
+    ).toEqual([]);
+    expect(
+      graph.edges.filter(
+        ({ properties }) => properties.exported_name === "Types",
+      ),
+    ).toEqual([]);
+    expect(graph.coverage).toMatchObject({
+      status: "complete",
+      omitted_count: 0,
+      truncated: false,
+    });
+  }
 });
 
 const expectRuntimeExports = async (
@@ -479,6 +948,58 @@ const expectRuntimeExports = async (
     [fixture.rightPath, fixture.input.right_export_name, 2],
   ] as const)
     expect(await runtimeExport(path, exportName)).toEqual(expected(count));
+};
+
+const expectExportedCallableBinding = (
+  evidence: unknown,
+  localName: string,
+): void => {
+  const analysis = z
+    .object({
+      normalized_result: javascriptApplicationAnalysisResultSchema,
+    })
+    .parse(evidence).normalized_result;
+  const exportBinding = analysis.graph.nodes
+    .flatMap(({ observations }) => observations)
+    .find(
+      ({ properties }) =>
+        properties.semantic_role === "export-binding" &&
+        properties.exported_name === "default",
+    );
+  expect(exportBinding?.properties.local_name).toBe(localName);
+  expect(analysis.semantic_graph.nodes).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "function", label: localName }),
+    ]),
+  );
+};
+
+const expectUnresolvedExportBinding = (
+  evidence: unknown,
+  exportName: string,
+): void => {
+  const analysis = z
+    .object({
+      normalized_result: javascriptApplicationAnalysisResultSchema,
+    })
+    .parse(evidence).normalized_result;
+  const observations = analysis.graph.nodes.flatMap(
+    ({ observations }) => observations,
+  );
+  expect(
+    observations.filter(
+      ({ properties }) =>
+        properties.semantic_role === "export-binding" &&
+        properties.exported_name === exportName,
+    ),
+  ).not.toHaveLength(0);
+  expect(
+    observations.filter(
+      ({ properties }) =>
+        properties.semantic_role === "export-return-shapes" &&
+        properties.exported_name === exportName,
+    ),
+  ).toEqual([]);
 };
 
 const expectUncertainComparison = (
@@ -541,8 +1062,8 @@ const analyzeVersions = async (
     writeFile(rightPath, source(2)),
   ]);
   const [left, right] = await Promise.all([
-    runCli(["analyze-javascript-application", leftRoot, "--json"]),
-    runCli(["analyze-javascript-application", rightRoot, "--json"]),
+    analyzeThroughMcp(leftRoot),
+    analyzeThroughMcp(rightRoot),
   ]);
   return {
     root,
@@ -559,6 +1080,31 @@ const analyzeVersions = async (
   };
 };
 
+const analyzeThroughMcp = async (inputPath: string) => {
+  const client = await getMcpClient();
+  const response = await client.callTool({
+    name: "analyze_javascript_application",
+    arguments: { input_path: inputPath, format: "auto" },
+  });
+  expect(response.isError).not.toBe(true);
+  return response.structuredContent;
+};
+
+const expectCliAnalysisParity = async (
+  fixture: Awaited<ReturnType<typeof analyzeVersions>>,
+): Promise<void> => {
+  for (const [root, evidence] of [
+    [join(fixture.root, "left"), fixture.input.left],
+    [join(fixture.root, "right"), fixture.input.right],
+  ] as const) {
+    const cli = applicationEnvelope.parse(
+      await runCli(["analyze-javascript-application", root, "--json"]),
+    );
+    const mcp = applicationEnvelope.parse(evidence);
+    expect(cli.normalized_result).toEqual(mcp.normalized_result);
+  }
+};
+
 const compareThroughCli = async (
   fixture: Awaited<ReturnType<typeof analyzeVersions>>,
 ) => {
@@ -570,33 +1116,38 @@ const compareThroughCli = async (
 };
 
 const compareThroughMcp = async (input: Record<string, unknown>) => {
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [resolve("scripts/rea.mjs"), "mcp"],
-    cwd: process.cwd(),
-    env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
-    stderr: "pipe",
+  const client = await getMcpClient();
+  const response = await client.callTool({
+    name: "compare_javascript_export_shapes",
+    arguments: input,
   });
-  const client = new Client({
-    name: "exported-function-bindings",
-    version: "1",
-  });
-  try {
-    await client.connect(transport);
-    const response = await client.callTool({
-      name: "compare_javascript_export_shapes",
-      arguments: input,
+  expect(response.isError).not.toBe(true);
+  await client.ping();
+  return comparisonEnvelope.parse(response.structuredContent).normalized_result;
+};
+
+const getMcpClient = async (): Promise<Client> => {
+  if (mcpConnection === undefined) {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [resolve("scripts/rea.mjs"), "mcp"],
+      cwd: process.cwd(),
+      env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+      stderr: "pipe",
     });
-    expect(response.isError).not.toBe(true);
-    return comparisonEnvelope.parse(response.structuredContent)
-      .normalized_result;
-  } finally {
-    try {
-      await client.close();
-    } finally {
-      await transport.close();
-    }
+    transport.stderr?.on("data", () => undefined);
+    const client = new Client({
+      name: "exported-function-bindings",
+      version: "1",
+    });
+    mcpConnection = {
+      client,
+      transport,
+      ready: client.connect(transport),
+    };
   }
+  await mcpConnection.ready;
+  return mcpConnection.client;
 };
 
 const runtimeExport = async (

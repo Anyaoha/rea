@@ -23,7 +23,12 @@ it("preserves a 12,000-member native import through both analyzers", () => {
   const ir = analyzeParsedJavaScriptSemantics(parsed);
   expect(staticAnalysis.parse_status).toBe("complete");
   expect(staticAnalysis.electron.native_addon_bindings).toEqual([
-    expect.objectContaining({ specifier: "./addon.node", members: ["last"] }),
+    expect.objectContaining({
+      specifier: "./addon.node",
+      members: ["next"],
+      namespace_access: false,
+      dynamic_member_access: false,
+    }),
   ]);
   expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
   const path = origin(onlyBinding(ir, "value"));
@@ -34,7 +39,7 @@ it("preserves a 12,000-member native import through both analyzers", () => {
   ]);
 });
 
-it("retains a deep CommonJS re-export path without inventing dynamic module links", () => {
+it("retains deep CommonJS paths and dependencies without inventing dynamic bindings", () => {
   const ir = analyzeJavaScriptSemantics(`
     module.exports.result = require("./dependency.js")${ordinaryMemberChain}.last;
     const dynamic = require("./other.js")${ordinaryMemberChain}[key].last;
@@ -45,6 +50,13 @@ it("retains a deep CommonJS re-export path without inventing dynamic module link
       specifier: "./dependency.js",
       importedName: "last",
       exportedName: "result",
+    }),
+    expect.objectContaining({
+      kind: "require",
+      specifier: "./other.js",
+      importedName: null,
+      localName: null,
+      exportedName: null,
     }),
   ]);
   expect(onlyBinding(ir, "dynamic").provenance).toMatchObject({

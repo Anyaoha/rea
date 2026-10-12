@@ -1,6 +1,6 @@
 <div align="center">
 
-[English](README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · **한국어** · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md)
+[English](README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · **한국어** · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
 
 # REA: 무엇이든 리버스 엔지니어링
 
@@ -9,7 +9,6 @@
 **마음에 드는 기능을 발견했다면, 바이너리 수준까지 작동 원리를 이해하세요.**
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](docs/mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
@@ -18,7 +17,7 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
-**[웹사이트](https://rea.tools/) · [가이드](https://rea.tools/guides/) · [사례](https://rea.tools/showcase/)**
+**[웹사이트](https://rea.tools/ko/) · [가이드](https://rea.tools/ko/guides/) · [사례](https://rea.tools/ko/showcase/)**
 
 [빠른 시작](#빠른-시작) · [REA의 작동 방식](#rea의-작동-방식) · [분석할 수 있는 대상](#분석할-수-있는-대상) · [사례](#사례) · [자주 묻는 질문](#자주-묻는-질문) · [문서](#문서)
 
@@ -54,7 +53,7 @@ REA는 에이전트를 분석 도구에 연결해 네이티브 바이너리, Jav
 
 설정 과정은 에이전트에 REA를 등록하고 해당 버전에 맞는 워크플로 지침을 설치합니다. 네이티브 분석에는 기존 Hopper 또는 Ghidra 설치를 사용할 수 있습니다. 승인하면 설정 과정에서 Hopper를 설치할 수도 있습니다. 정적 JavaScript 분석에는 두 엔진 모두 필요하지 않습니다.
 
-> **[REA 웹사이트](https://rea.tools/)**에서 설정 방법, 그림으로 설명한 가이드, 실제 사례를 확인하세요.
+> **[REA 웹사이트](https://rea.tools/ko/)**에서 설정 방법, 그림으로 설명한 가이드, 실제 사례를 확인하세요.
 
 ## 빠른 시작
 
@@ -133,16 +132,22 @@ REA에는 Node.js 22.x(>=22.19), 24.x(>=24.11) 또는 26+와 npm이 필요합니
 
 | 대상                  | REA가 반환하는 내용                                                           | 요구 사항 및 가이드                                                                                                                   |
 | --------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| 네이티브 바이너리     | 의사 코드, 어셈블리, 문자열, 심볼, 호출, 참조                                 | Hopper, Ghidra 또는 IDA; [네이티브 분석](https://rea.tools/guides/native/)                                                            |
+| 네이티브 바이너리     | 의사 코드, 어셈블리, 문자열, 심볼, 호출, 참조                                 | Hopper, Ghidra 또는 IDA; [네이티브 분석](https://rea.tools/ko/guides/native/)                                                         |
 | 오프라인 ELF 레이아웃 | 섹션, 세그먼트, 원본 심볼/재배치 정보, 정적 분석으로 얻은 보안 완화 기법 후보 | Linux x64에서 호출자가 제공하는 pwntools; [바이너리 진단](docs/binary-diagnostics.md)                                                 |
-| EVM 바이트코드        | 디스패치 선택자, 바이트 오프셋, 추론한 인자와 상태 변경 가능 여부             | 로컬 원시 바이트/16진수 입력 파일; [오프라인 EVM 가이드](docs/evm-bytecode.md)                                                        |
-| 기록된 Linux 크래시   | 원시 note 레코드, 기록된 모든 스레드의 레지스터/시그널, 선택적 매핑 후보      | 호출자가 제공하는 pwntools; GDB/pwndbg는 선택 사항; [기록된 크래시](docs/recorded-crashes.md)                                         |
-| JavaScript / Electron | 모듈, 임포트, 소스 맵, 라우트, IPC, 네이티브 애드온 관계                      | Node.js와 npm; [애플리케이션 분석](https://rea.tools/guides/javascript/)                                                              |
-| 웹사이트              | 페이지 구조, 스크립트, 네트워크 관찰 결과, 요청한 스크린샷                    | Chrome 계열 브라우저; [브라우저 분석](https://rea.tools/guides/browser/)                                                              |
+| EVM 바이트코드        | 디스패치 선택자, 바이트 오프셋, 추론한 인자와 상태 변경 가능 여부             | Linux x64의 로컬 원시 바이트/16진수 입력 파일; [오프라인 EVM 가이드](docs/evm-bytecode.md)                                            |
+| 기록된 Linux 크래시   | 원시 note 레코드, 기록된 모든 스레드의 레지스터/시그널, 선택적 매핑 후보      | Linux x64에서 호출자가 제공하는 pwntools; GDB/pwndbg는 선택 사항; [기록된 크래시](docs/recorded-crashes.md)                           |
+| JavaScript / Electron | 모듈, 임포트, 소스 맵, 라우트, IPC, 네이티브 애드온 관계                      | Node.js와 npm; [애플리케이션 분석](https://rea.tools/ko/guides/javascript/)                                                           |
+| 웹사이트              | 페이지 구조, 스크립트, 네트워크 관찰 결과, 요청한 스크린샷                    | Chrome 계열 브라우저; [브라우저 분석](https://rea.tools/ko/guides/browser/)                                                           |
 | 저장된 네트워크 캡처  | 요청, 응답, 접근 가능한 페이로드, 소스 위치                                   | HAR; mitmproxy 네이티브 캡처에는 Linux의 mitmdump; [캡처 가이드](docs/web-network-captures.md)                                        |
 | .NET 어셈블리         | 메타데이터, CIL 명령, 선언된 네이티브 의존성, 빌드 비교                       | 정적 검사; [관리 코드 가이드](docs/managed-code-analysis.md)                                                                          |
-| Android APK           | 매니페스트 선언, 클래스, 디컴파일된 메서드, 참조                              | Linux/macOS의 헤드리스 JADX와 전체 JDK; [Android 가이드](docs/android-analysis.md)                                                    |
+| Android APK           | 매니페스트 선언, 클래스, 디컴파일된 메서드, 참조                              | Linux/macOS/Windows x64의 헤드리스 JADX와 전체 JDK; [Android 가이드](docs/android-analysis.md)                                        |
+| Android 기기          | 기기, 패키지, 프로세스, 로그, 덤프, 화면 캡처, APK/파일 전송                  | 호출자 제공 adb(에뮬레이터 또는 실제 기기); [ADB 가이드](docs/adb-device-analysis.md)                                                 |
+| JEB 프로젝트          | 엔진 기반 프로젝트 유닛, 아티팩트 해시, 타입/메서드 의사코드                  | 호출자가 시작하고 MCP를 제공하는 JEB 클라이언트(REA_JEB_MCP_URL로 선택); [JEB 가이드](docs/jeb-analysis.md)                           |
+| Android 리소스        | 디코딩된 매니페스트, 문자열 테이블, 로캘, 버전 정보                           | 호출자 제공 Apktool 런처; [리소스 가이드](docs/apktool-resource-analysis.md)                                                          |
+| Flutter 앱            | Dart 스냅샷 해시, ABI별 라이브러리 해시, 엔진 빌드 출처                       | 없음 (정적 APK 파싱); [Flutter 가이드](docs/flutter-analysis.md)                                                                      |
 | 펌웨어                | 영역, 추출 결과, 네이티브 분석으로 전달할 정보                                | Linux의 Binwalk / Unblob; [펌웨어 가이드](docs/firmware-analysis.md)                                                                  |
+| 기록된 패킷           | 선택 필드, 반복 값, 필터 및 디코딩 규칙                                       | Linux: TShark 4.x + prlimit; [캡처 가이드](docs/packet-captures.md)                                                                   |
+| 기록된 논리 신호      | 디코더 주석, 샘플 범위, 진단 정보                                             | Linux: sigrok-cli 0.7.2 + prlimit; [신호 기록 가이드](docs/signal-recordings.md)                                                      |
 | 패키지 및 리소스      | 파일 목록, 다이제스트, plist, Apple 번들 구조, 추출한 리소스                  | [아티팩트 및 JavaScript 가이드](docs/javascript-artifact-reconstruction.md), [Apple 애플리케이션](docs/apple-application-analysis.md) |
 | 프로세스 동작         | 터미널 출력, 상호작용, 종료 및 파일 시스템 관찰 결과, 실행 비교               | 네이티브 PTY를 지원하는 Linux/macOS; [프로세스 캡처](docs/process-capture.md)                                                         |
 
@@ -154,26 +159,26 @@ REA에는 Node.js 22.x(>=22.19), 24.x(>=24.11) 또는 26+와 npm이 필요합니
 
 ## 사례
 
-[![DX-Ball 사운드 패닝, Notion 클립보드 브리지, TH04 탄환 고리 사례를 보여 주는 그림](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+[![DX-Ball 사운드 패닝, Notion 클립보드 브리지, TH04 탄환 고리 사례를 보여 주는 그림](docs/assets/rea-showcases.png)](https://rea.tools/ko/showcase/)
 
 ### DX-Ball: 사운드 패닝 계산 재구현
 
 사운드 호출에서 위치를 패닝 값으로 변환하는 보조 함수까지 추적하고, 명령을 검사하여 불완전한 의사 코드를 C로 옮깁니다. 재구현한 코드는 원본 x86에 대한 3,205개 테스트 케이스를 통과했으며, 컴파일된 함수의 63바이트 전체를 재현합니다.
 
-[사례 읽기](https://rea.tools/showcase/dx-ball/) ·
+[사례 읽기](https://rea.tools/ko/showcase/dx-ball/) ·
 [재구현 저장소](https://github.com/N0zoM1z0/dx-ball)
 
 ### Notion: Electron 클립보드 브리지 추적
 
 렌더러의 클립보드 API를 찾고, preload와 IPC를 거쳐 메인 프로세스까지 추적한 뒤, 서식 있는 클립보드 형식을 검사합니다.
 
-[사례 읽기](https://rea.tools/showcase/notion/)
+[사례 읽기](https://rea.tools/ko/showcase/notion/)
 
 ### TH04: DOS 원형 탄막 계산 복원
 
 원본 PC-98 게임의 16비트 명령을 검사하고 고정 각도와 조준 각도의 계산을 복원합니다. 재구현한 C++를 당시 컴파일러의 출력과 비교합니다.
 
-[사례 읽기](https://rea.tools/showcase/th04/) ·
+[사례 읽기](https://rea.tools/ko/showcase/th04/) ·
 [재구현 저장소](https://github.com/N0zoM1z0/th04)
 
 REA로 흥미로운 대상을 분석했다면 알려 주세요. [issue](https://github.com/morluto/rea/issues) 또는 [pull request](https://github.com/morluto/rea/pulls)에 대상, 조사하려던 질문, REA가 어떻게 도움이 되었는지, 무엇을 알아냈는지를 담아 공유하세요.
@@ -245,7 +250,7 @@ npx rea-agents@latest setup
 
 ## 문서
 
-웹사이트의 [실습 가이드](https://rea.tools/guides/)부터 읽어 보세요. 정확한 옵션, 사전 요구 사항, 결과 계약은 다음 문서를 참고하세요.
+웹사이트의 [실습 가이드](https://rea.tools/ko/guides/)부터 읽어 보세요. 정확한 옵션, 사전 요구 사항, 결과 계약은 다음 문서를 참고하세요.
 
 - [설치 및 설정](docs/installation.md): 에이전트 등록, 제공자 설정, 업데이트, 제거.
 - [준비 상태 확인 및 문제 해결](docs/installation.md#check-readiness-for-your-task): 특정 에이전트 또는 분석 엔진 진단.
@@ -258,7 +263,7 @@ npx rea-agents@latest setup
 
 ## 스타 기록
 
-🎉 **GitHub 스타 50,000개, 감사합니다!**
+🎉 **GitHub 스타 110,000개, 감사합니다!**
 
 REA를 사용하고, 버그를 보고하고, 기능을 요청하고, 빌드를 테스트하고, 수정에 기여해 주신 모든 분께 감사드립니다.
 
@@ -272,7 +277,13 @@ REA를 사용하고, 버그를 보고하고, 기능을 요청하고, 빌드를 �
 
 ## 면책 조항
 
-REA는 합법적인 리버스 엔지니어링 연구, 분석, 재구성을 위한 도구를 제공합니다. 필요한 권한을 얻고 관련 법률을 준수할 책임은 사용자에게 있습니다. 이 프로젝트는 불법적이거나 허가받지 않은 사용을 지지하지 않습니다.
+책임 있는 사용에 관한 안내는 [DISCLAIMER.md](DISCLAIMER.md)를 참고하세요.
+
+REA는 법을 준수하는 연구, 교육, 상호운용성 확보, 소프트웨어 보존, 그리고 본인이 소유하거나 조사 권한을 가진 소프트웨어의 분석을 위한 도구입니다.
+
+The project's position on illegal or unauthorized use covers all REA
+versions, distribution channels, and platforms; each copy retains its
+applicable licenses.
 
 ## 기여
 
@@ -283,3 +294,15 @@ REA에 도움을 보태 주세요! [issue를 등록](https://github.com/morluto/
 ## 라이선스
 
 [MIT](LICENSE)
+
+REA-authored code is licensed under MIT. Third-party material retains its own
+licenses and copyright notices; see [Third-party notices](THIRD_PARTY_NOTICES.md)
+for the dependency inventory, preserved license texts, and external-tool terms.
+
+**You must legally obtain and be authorized to use commercial tools**, including
+IDA Pro / Hex-Rays decompilers, Hopper, and JEB, under their applicable licenses.
+REA grants no tool license, key, or activation entitlement. Trials and demos
+remain subject to vendor terms, including user, feature, automation, and output
+sharing restrictions. Cracked copies, stolen keys, unauthorized key sharing,
+and bypassing license restrictions are not authorized. This guidance does not
+amend MIT or third-party licenses.

@@ -6,15 +6,20 @@ import type {
   ProviderIdentity,
 } from "../application/AnalysisProvider.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
+import {
+  isMachOFormat,
+  isElfMetadataArchitecture,
+  type BinaryTarget,
+  type ElfMetadataArchitecture,
+  type HeaderArchitecture,
+} from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
 } from "../domain/analysisErrorCore.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { type AnalysisError } from "../domain/analysisErrorBase.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 import {
@@ -37,7 +42,7 @@ export const resolveHopperAnalysisProfile = async (
   if (target.kind !== "executable" && target.kind !== "database")
     return ok({ profile: null });
   let machoContainer: "thin" | "fat32" | "fat64" | undefined;
-  if (target.kind === "executable" && target.format === "mach-o") {
+  if (target.kind === "executable" && isMachOFormat(target.format)) {
     const header = await readMachoMagic(target.path, options.signal);
     if (!header.ok) return header;
     machoContainer = [0xcafebabf, 0xbfbafeca].includes(header.value)
@@ -98,6 +103,15 @@ export const resolveHopperAnalysisProfile = async (
   });
 };
 
+/** Ghidra owns these lanes; Hopper names the family it declines rather than guessing. */
+const HOPPER_DECLINED_ARCHITECTURE_LABELS: Record<
+  ElfMetadataArchitecture,
+  string
+> = {
+  mips: "MIPS",
+  riscv: "RISC-V",
+};
+
 /** Derive Hopper's complete non-interactive CLI loader selection. */
 export const hopperLoaderArgsForTarget = (
   target: BinaryTarget,
@@ -110,35 +124,45 @@ export const hopperLoaderArgsForTarget = (
   if (target.kind !== "executable")
     return err(new ProviderAdapterError("hopper", "resolve_analysis_profile"));
   const architecture = target.architecture;
+  if (isElfMetadataArchitecture(architecture))
+    return err(
+      new AnalysisCapabilityUnavailableError(
+        "hopper",
+        "resolve_analysis_profile",
+        `REA's Hopper adapter does not admit ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} targets. Select a verified Ghidra ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} profile instead.`,
+      ),
+    );
   const flag = hopperArchitectureFlag(architecture);
-  switch (target.format) {
-    case "mach-o":
-      if (machoContainer === undefined)
-        return err(
-          new AnalysisCapabilityUnavailableError(
-            "hopper",
-            "resolve_analysis_profile",
-            "Mach-O container kind is unknown; resolve the Hopper analysis profile before starting its client.",
-          ),
-        );
-      return ok(
-        machoContainer === "fat32" || machoContainer === "fat64"
-          ? ["-l", "FAT", flag, "-l", "Mach-O"]
-          : ["-l", "Mach-O", flag],
+  if (isMachOFormat(target.format)) {
+    if (machoContainer === undefined)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "hopper",
+          "resolve_analysis_profile",
+          "Mach-O container kind is unknown; resolve the Hopper analysis profile before starting its client.",
+        ),
       );
+    return ok(
+      machoContainer === "fat32" || machoContainer === "fat64"
+        ? ["-l", "FAT", flag, "-l", "Mach-O"]
+        : ["-l", "Mach-O", flag],
+    );
+  }
+  switch (target.format) {
     case "elf":
       return ok(["-l", "ELF", flag]);
     case "pe":
       return ok(["-l", "WinPE", flag]);
     case "dos-mz":
     case "dos-com":
+    case "raw-binary":
       return err(
         new ProviderAdapterError("hopper", "resolve_analysis_profile"),
       );
   }
 };
 
-const hopperArchitectureFlag = (architecture: BinaryArchitecture): string => {
+const hopperArchitectureFlag = (architecture: HeaderArchitecture): string => {
   switch (architecture) {
     case "x86":
       return "--intel-32";

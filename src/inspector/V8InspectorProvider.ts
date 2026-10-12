@@ -15,7 +15,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { type BrowserObservationOperation } from "../domain/browserObservationErrors.js";
+import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   numberValue,
@@ -117,7 +117,9 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
           runtime: discovery.runtime,
           targets: allowed.map(projectTarget),
           excluded: { ...excluded, unconnectable: 0 },
-          limitations: describeInspectorTargetLimitations(),
+          limitations: describeInspectorTargetLimitations(
+            allowed.some((target) => target.attached === null),
+          ),
         }),
       );
     } catch (cause: unknown) {
@@ -357,7 +359,7 @@ const authorizedTarget = async (
     product,
   });
   if (
-    target.attached ||
+    target.attached === true ||
     !decision.allowed ||
     decision.location.kind === "builtin"
   )

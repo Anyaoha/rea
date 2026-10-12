@@ -1,10 +1,14 @@
+import { readClientPolicyBlock } from "./GeminiClientSettings.js";
+import {
+  effectiveClientConfiguration,
+  readClientConfigurationFiles,
+} from "./ClientConfigurationFiles.js";
 import {
   clientServerForcedEnabled,
   clientServerListedDisabled,
   effectiveClientServer,
-  parseClientConfiguration,
 } from "./ClientConfigurationDocument.js";
-import { access, readFile } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { z } from "zod";
@@ -13,13 +17,17 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
 import {
   isOwnedClientRegistrationCommand,
-  npxRegistrationCommand,
+  packageRunnerRegistrationCommand,
 } from "./ClientRegistrationIdentity.js";
 import {
+  clientEvidencePaths,
   manualRegistrationRemediation,
   supportedClients,
 } from "./SupportedClients.js";
 import type { SetupClient } from "./SupportedClients.js";
+import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { dshDocument } from "./DshCordisPatch.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 interface ClientRegistrationStatusBase {
   readonly client: string;
@@ -59,6 +67,7 @@ const registrationSchema = z
     startup_timeout_sec: z.number().positive().optional(),
     type: z.string().optional(),
     transport: z.string().optional(),
+    serverName: z.string().optional(),
     tools: z.array(z.string()).optional(),
     disabled: z.boolean().optional(),
     enabled: z.boolean().optional(),
@@ -72,34 +81,26 @@ export const readClientRegistrationStatuses = async (
   options: {
     readonly platform?: NodeJS.Platform;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly resources?: ArtifactResourceScope;
   } = {},
 ): Promise<readonly ClientRegistrationStatus[]> => {
   const statuses: ClientRegistrationStatus[] = [];
   for (const client of supportedClients(
     home,
     options.platform,
-    options.environment === undefined
-      ? undefined
-      : {
-          APPDATA: options.environment.APPDATA,
-          CLAUDE_CONFIG_DIR: options.environment.CLAUDE_CONFIG_DIR,
-          CODEX_HOME: options.environment.CODEX_HOME,
-          COPILOT_HOME: options.environment.COPILOT_HOME,
-          GROK_HOME: options.environment.GROK_HOME,
-          OMP_PROFILE: options.environment.OMP_PROFILE,
-          OPENCODE_CONFIG: options.environment.OPENCODE_CONFIG,
-          PI_CODING_AGENT_DIR: options.environment.PI_CODING_AGENT_DIR,
-          PI_CONFIG_DIR: options.environment.PI_CONFIG_DIR,
-          PI_PROFILE: options.environment.PI_PROFILE,
-          SAND_DATA_ROOT: options.environment.SAND_DATA_ROOT,
-          XDG_CONFIG_HOME: options.environment.XDG_CONFIG_HOME,
-        },
+    options.environment,
   )) {
-    if (
-      !(await exists(client.markerPath)) &&
-      !(await exists(client.configPath))
-    )
+    if (client.configPathError !== undefined) {
+      statuses.push({
+        client: client.name,
+        config_path: client.configPath,
+        command: [],
+        state: "invalid",
+        remediation: client.configPathError,
+      });
       continue;
+    }
+    if (!(await clientEvidencePresent(client))) continue;
     const manualRemediation = manualRegistrationRemediation(client.name);
     if (client.format === "unsupported") {
       if (manualRemediation !== undefined)
@@ -113,10 +114,60 @@ export const readClientRegistrationStatuses = async (
       continue;
     }
     try {
-      const content = await readFile(client.configPath, "utf8");
-      const parsed = parseClientConfiguration(content, client.format);
+      const files = await readClientConfigurationFiles(
+        client,
+        options.resources,
+      );
+      if (!files.ok) {
+        statuses.push({
+          client: client.name,
+          config_path: client.configPath,
+          command: [],
+          state: "invalid",
+          remediation: files.error.detail,
+        });
+        continue;
+      }
+      const parsed = effectiveClientConfiguration(files.value);
+      if (parsed === undefined) {
+        statuses.push(
+          unavailableStatus(client.name, client.configPath, "missing"),
+        );
+        continue;
+      }
+      const policy = await readClientPolicyBlock(
+        client,
+        parsed,
+        undefined,
+        options.resources,
+      );
+      if (!policy.ok) {
+        statuses.push({
+          client: client.name,
+          config_path: client.configPath,
+          command: [],
+          state: "invalid",
+          remediation: policy.error.detail,
+        });
+        continue;
+      }
+      const policyBlock = policy.value;
       const raw = effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey);
       if (raw === undefined) {
+        const editabilityError =
+          parsed.dialect === "dsh"
+            ? dshDocument(parsed.document).editabilityError
+            : undefined;
+        if (editabilityError !== undefined) {
+          statuses.push({
+            client: client.name,
+            config_path: client.configPath,
+            command: [],
+            state: "invalid",
+            remediation: editabilityError.message,
+          });
+          continue;
+        }
         statuses.push(
           unavailableStatus(client.name, client.configPath, "missing"),
         );
@@ -139,9 +190,15 @@ export const readClientRegistrationStatuses = async (
             options.platform ?? process.platform,
             clientServerForcedEnabled(parsed, PRODUCT_IDENTITY.mcpServerKey),
           ) &&
-            !clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey)
+            !clientServerListedDisabled(
+              parsed,
+              PRODUCT_IDENTITY.mcpServerKey,
+            ) &&
+            (parsed.dialect !== "dsh" || dshDocument(parsed.document).ready) &&
+            policyBlock === undefined
             ? "aligned"
             : "stale",
+          policyBlock,
         ),
       );
     } catch (cause: unknown) {
@@ -155,7 +212,7 @@ export const readClientRegistrationStatuses = async (
     }
   }
   return statuses.sort((left, right) =>
-    left.client.localeCompare(right.client),
+    compareUnicodeCodePoints(left.client, right.client),
   );
 };
 
@@ -168,8 +225,10 @@ const registrationAligned = (
 ): boolean => {
   const command = [registration.command, ...registration.args];
   if (
-    registration.disabled === true ||
-    (registration.enabled === false && !forcedEnabled)
+    (client.format !== "grok" && registration.disabled === true) ||
+    (registration.enabled === false && !forcedEnabled) ||
+    // ZCode's native flag is `enable`; other dialects leave that field opaque.
+    (client.format === "zcode" && registration.enable === false)
   )
     return false;
   if (!isOwnedClientRegistrationCommand(command, currentCommandPath))
@@ -181,9 +240,16 @@ const registrationAligned = (
   )
     return false;
   if (client.format === "vscode" && registration.type !== "stdio") return false;
-  // OMP infers stdio for a command entry without an explicit type.
+  // A Harness registration only connects as the rea stdio server; another
+  // server name or transport leaves the session without REA tools.
   if (
-    client.format === "omp" &&
+    client.format === "dsh" &&
+    (registration.serverName !== "rea" || registration.transport !== "stdio")
+  )
+    return false;
+  // OMP and Pi infer stdio for a command entry without an explicit type.
+  if (
+    (client.format === "omp" || client.format === "pi") &&
     registration.type !== undefined &&
     registration.type !== "stdio"
   )
@@ -203,10 +269,14 @@ const registrationAligned = (
     resolve(command[1] ?? "") === currentCommandPath
   )
     return true;
-  const npxCommand = npxRegistrationCommand(platform);
   if (
-    command.length === npxCommand.length &&
-    command.every((argument, index) => argument === npxCommand[index])
+    (["npx", "bunx"] as const).some((runner) => {
+      const runnerCommand = packageRunnerRegistrationCommand(runner, platform);
+      return (
+        command.length === runnerCommand.length &&
+        command.every((argument, index) => argument === runnerCommand[index])
+      );
+    })
   )
     return true;
   return (
@@ -220,6 +290,11 @@ const parseRegistration = (
   value: unknown,
   client: SetupClient,
 ): z.output<typeof registrationSchema> => {
+  if (client.format === "dsh")
+    return registrationSchema
+      .pick({ command: true, args: true, serverName: true, transport: true })
+      .strip()
+      .parse(value);
   if (client.format === "opencode") {
     const entry = z
       .object({
@@ -245,7 +320,7 @@ const parseRegistration = (
   if (client.format === "commandcode" && registration.transport !== "stdio")
     throw new TypeError("Expected an stdio registration");
   if (
-    client.format === "omp" &&
+    (client.format === "omp" || client.format === "pi") &&
     registration.type !== undefined &&
     registration.type !== "stdio"
   )
@@ -261,10 +336,17 @@ const configuredStatus = (
   configPath: string,
   command: RegistrationCommand,
   state: "aligned" | "stale",
+  policyRemediation?: string,
 ): ClientRegistrationStatus =>
   state === "aligned"
     ? { client, config_path: configPath, command, state, remediation: null }
-    : { client, config_path: configPath, command, state, remediation };
+    : {
+        client,
+        config_path: configPath,
+        command,
+        state,
+        remediation: policyRemediation ?? remediation,
+      };
 
 const unavailableStatus = (
   client: string,
@@ -277,6 +359,12 @@ const unavailableStatus = (
   state,
   remediation,
 });
+
+const clientEvidencePresent = async (client: SetupClient): Promise<boolean> => {
+  for (const path of clientEvidencePaths(client))
+    if (await exists(path)) return true;
+  return false;
+};
 
 const exists = async (path: string | undefined): Promise<boolean> => {
   if (path === undefined) return false;

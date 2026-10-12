@@ -1,19 +1,17 @@
-import { realpath } from "node:fs/promises";
-import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-import { _electron as electron } from "playwright-core";
+import type { _electron as electron } from "playwright-core";
 
 import type {
   ExecutionOptions,
   ProviderIdentity,
 } from "../application/AnalysisProvider.js";
-import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
 import type {
-  ElectronActiveObservationInput,
-  ElectronActiveObservationResult,
-} from "../domain/javascript/electronActiveObservation.js";
+  CanonicalElectronActiveObservationInput,
+  ElectronActiveObservationPort,
+} from "../application/javascript/ElectronActiveObservationPort.js";
+import type { ElectronActiveObservationResult } from "../domain/javascript/electronActiveObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -60,8 +58,9 @@ type ElectronPaths = {
 export class PlaywrightElectronActiveProvider implements ElectronActiveObservationPort {
   constructor(
     private readonly environment: Readonly<Record<string, string | undefined>>,
-    private readonly launch: typeof electron.launch = (options) =>
-      electron.launch(options),
+    // Load Playwright only when a capture launches; MCP startup stays off its module graph.
+    private readonly launch: typeof electron.launch = async (options) =>
+      (await import("playwright-core"))._electron.launch(options),
   ) {}
 
   identity(): ProviderIdentity {
@@ -69,7 +68,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
   }
 
   async capture(
-    input: ElectronActiveObservationInput,
+    input: CanonicalElectronActiveObservationInput,
     options: ExecutionOptions = {},
   ): Promise<Result<ElectronActiveObservationResult, AnalysisError>> {
     let application: ElectronApplication | undefined;
@@ -88,7 +87,11 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         throw new BrowserObservationError(OPERATION, "cancelled");
       await prepareProcessOwnershipInspection(options.signal);
       const startupDeadline = Date.now() + STARTUP_TIMEOUT_MS;
-      paths = await canonicalPaths(input);
+      paths = {
+        executable: input.executable_path,
+        application: input.application_path,
+        root: input.application_root,
+      };
       const captureBaseline =
         await systemProcessOwnershipHost.captureBaseline?.(options.signal);
       if (options.signal?.aborted)
@@ -259,21 +262,30 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
   }
 }
 
-const cleanupElectronProcesses = async (
+/** Clean up an Electron launch. Windows signals a process only after lineage is verified. */
+export const cleanupElectronProcesses = async (
   ownership: OwnedProcessGroup,
   lineage: ProcessLineageObservation | undefined,
+  host: {
+    readonly platform: NodeJS.Platform;
+    readonly terminateTree: typeof cleanupWindowsProcessTree;
+  } = {
+    platform: process.platform,
+    terminateTree: cleanupWindowsProcessTree,
+  },
 ): Promise<ProcessCleanupResult> => {
-  if (process.platform === "win32") {
-    const root = await cleanupWindowsProcessTree(ownership.leaderPid);
-    if (!root.cleaned) return root;
+  if (host.platform === "win32") {
+    // An empty Windows process table is not ownership proof for this PID.
     if (lineage?.status !== "verified")
       return {
         cleaned: false,
         reason:
           "owned Electron lineage was unavailable; helper cleanup was not proven",
       };
+    const root = await host.terminateTree(ownership.leaderPid);
+    if (!root.cleaned) return root;
     for (const descendant of lineage.lineage.descendants) {
-      const result = await cleanupWindowsProcessTree(descendant.pid);
+      const result = await host.terminateTree(descendant.pid);
       if (!result.cleaned) return result;
     }
     return root;
@@ -341,20 +353,6 @@ const cleanupElectronProcesses = async (
           ],
         }),
   };
-};
-
-const canonicalPaths = async (
-  input: ElectronActiveObservationInput,
-): Promise<ElectronPaths> => {
-  const [executable, application] = await Promise.all([
-    realpath(input.executable_path),
-    realpath(input.application_path),
-  ]);
-  const root =
-    input.application_root === undefined
-      ? dirname(application)
-      : await realpath(input.application_root);
-  return { executable, application, root };
 };
 
 const safeElectronEnvironment = (

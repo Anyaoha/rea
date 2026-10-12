@@ -8,6 +8,8 @@ import {
   type SourceMapSegment,
 } from "@jridgewell/trace-mapping";
 import { z } from "zod";
+import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
+import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { webSourceOffset } from "../../domain/webSourcePosition.js";
 import {
   webSourceMapReportSchema,
@@ -32,7 +34,6 @@ export const traceSourceMap = (
   position: WebSourcePosition,
 ): WebSourceMapReport => {
   const inspected = inspectSourceMap(text);
-  const map = new AnyMap(inspected.jsonText, url);
   const decodedLeaves = decodeValidatedSourceMapLeaves(inspected.leaves, url);
   for (const { leaf, rows } of decodedLeaves)
     for (const [line, row] of rows.entries())
@@ -42,6 +43,27 @@ export const traceSourceMap = (
             "format",
             "Embedded source-map mappings overlap the following section boundary.",
           );
+  let map: TraceMap;
+  if (inspected.format === "regular") {
+    const decoded = decodedLeaves[0];
+    if (decoded === undefined)
+      throw new SourceMapFormatFailure(
+        "format",
+        "Regular source map has no validated leaf.",
+      );
+    map = decoded.map;
+  } else {
+    map = new AnyMap(
+      {
+        version: 3,
+        sections: decodedLeaves.map(({ leaf, map: sectionMap }) => ({
+          offset: leaf.offset,
+          map: sectionMap,
+        })),
+      },
+      url,
+    );
+  }
   const rows =
     inspected.format === "regular"
       ? (decodedLeaves[0]?.rows ?? [])
@@ -72,15 +94,29 @@ export const traceSourceMap = (
   const version = z
     .object({ version: z.string().min(1) })
     .parse(metadata).version;
+  const runtime = javaScriptRuntime(process.versions);
   return webSourceMapReportSchema.parse({
     source_map_sha256: createHash("sha256").update(text).digest("hex"),
     url_context: url,
     engine: { id: "jridgewell-trace-mapping", version },
-    runtime: {
-      id: "node-v8",
-      version: process.version,
-      v8_heap_limit_bytes: getHeapStatistics().heap_size_limit,
-    },
+    // Bun reports V8-shaped heap statistics but ignores the codec's heap flags.
+    // Its launcher applies the same runtime policy, and the parent verifies it.
+    runtime:
+      runtime.id === "node"
+        ? {
+            id: "node-v8",
+            version: process.version,
+            v8_heap_limit_bytes: getHeapStatistics().heap_size_limit,
+          }
+        : {
+            id: "bun",
+            version: runtime.version,
+            node_compatibility_version: runtime.nodeCompatibilityVersion,
+            v8_heap_limit_bytes: null,
+            process_memory_limit_bytes: javaScriptWorkerMemoryLimitBytes(
+              WEB_SOURCE_MAP_LIMITS.codecHeapMiB,
+            ),
+          },
     format: inspected.format,
     reported_file: inspected.reportedFile,
     lookup: {

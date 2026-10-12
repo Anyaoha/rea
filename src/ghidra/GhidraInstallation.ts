@@ -17,7 +17,10 @@ import {
   parseExecutableHeader,
   type ExecutableMetadata,
 } from "../domain/binaryTarget.js";
-import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
+import {
+  isMachOFormat,
+  type BinaryArchitecture,
+} from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   ghidraApplicationProperties,
@@ -28,7 +31,6 @@ import {
   ghidraReleaseCompatibility,
   ghidraReleaseLine,
   ghidraVersionDetail,
-  SUPPORTED_GHIDRA_JAVA_MAJOR,
   SUPPORTED_GHIDRA_VERSION,
   type GhidraApplicationProperties,
   type GhidraJavaRequirement,
@@ -116,7 +118,9 @@ const assessNativeDecompiler = (
       const alternative = parseExecutableHeader(probe.bytes, node, probe.size);
       if (
         alternative.ok &&
-        !alternative.value.availableArchitectures.includes(expectedArchitecture)
+        !alternative.value.availableArchitectures.some(
+          (available) => available === expectedArchitecture,
+        )
       ) {
         parsed = alternative;
         break;
@@ -130,7 +134,10 @@ const assessNativeDecompiler = (
     };
   const observed = `${parsed.value.format} ${parsed.value.architecture}`;
   const expected = `${expectedFormat} ${expectedArchitecture}`;
-  if (observed === expected)
+  const formatMatches = isMachOFormat(expectedFormat)
+    ? isMachOFormat(parsed.value.format)
+    : parsed.value.format === expectedFormat;
+  if (formatMatches && parsed.value.architecture === expectedArchitecture)
     return {
       status: "compatible",
       detail: `${path} reports ${observed}, which matches ${platform}/${architecture}`,
@@ -185,6 +192,8 @@ interface GhidraInstallationObservation {
   readonly applicationPropertiesPath: string | null;
   readonly nativeDecompilerPath: string | null;
   readonly javaCommand: string;
+  /** Observed java.vm.name; omitted when the probe cannot establish VM identity. */
+  readonly javaVmName?: string;
   readonly checks: readonly GhidraInstallationCheck[];
 }
 
@@ -225,6 +234,7 @@ export interface GhidraJavaObservation {
   readonly home: string;
   readonly bits: number;
   readonly runtime: "jdk" | "jre";
+  readonly vmName?: string;
 }
 
 /** A bounded executable-header probe: a small prefix plus the whole file size. */
@@ -302,6 +312,9 @@ export const inspectGhidraInstallation = (
     applicationPropertiesPath: coordinates.applicationPropertiesPath,
     nativeDecompilerPath: coordinates.nativeDecompilerPath,
     javaCommand: coordinates.javaCommand,
+    ...(coordinates.java?.vmName === undefined
+      ? {}
+      : { javaVmName: coordinates.java.vmName }),
     checks,
   };
   if (failed !== undefined)
@@ -532,6 +545,7 @@ export const ghidraInstallationDiagnostics = (
   java_command: inspection.javaCommand,
   java_home: inspection.javaHome,
   java_version: inspection.javaVersion,
+  java_vm_name: inspection.javaVmName ?? null,
   platform: inspection.platform,
   architecture: inspection.architecture,
   checks: inspection.checks.map((check) => ({
@@ -727,7 +741,16 @@ const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
   probeJava(command, environment) {
     const observed = spawnSync(
       command,
-      ["-XX:-UsePerfData", "-XshowSettings:properties", "-version"],
+      [
+        "-Dstdout.encoding=UTF-8",
+        "-Dstderr.encoding=UTF-8",
+        // JDK 17/18 use the legacy names; JDK 19+ use the names above.
+        "-Dsun.stdout.encoding=UTF-8",
+        "-Dsun.stderr.encoding=UTF-8",
+        "-XX:-UsePerfData",
+        "-XshowSettings:properties",
+        "-version",
+      ],
       {
         encoding: "utf8",
         env: environment,
@@ -740,6 +763,7 @@ const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
     const output = `${observed.stdout ?? ""}\n${observed.stderr ?? ""}`;
     const version = javaProperty(output, "java.version");
     const home = javaProperty(output, "java.home");
+    const vmName = javaProperty(output, "java.vm.name");
     const bits = Number.parseInt(
       javaProperty(output, "sun.arch.data.model") ?? "0",
       10,
@@ -749,6 +773,7 @@ const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
       version,
       major: javaMajor(version),
       home,
+      ...(vmName === null ? {} : { vmName }),
       bits,
       runtime: executablePath(
         (process.platform === "win32" ? win32 : posix).join(

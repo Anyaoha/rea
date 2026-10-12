@@ -3,6 +3,7 @@ import type {
   ReconstructionObligationManifest,
 } from "../domain/reconstructionObligationLedgerSchemas.js";
 import type { Evidence } from "../domain/evidence.js";
+import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 type Diagnostic = ReconstructionObligation["diagnostics"][number];
 type Binding = NonNullable<ReconstructionObligation["binding"]>;
@@ -50,15 +51,11 @@ export const uniqueObligationDiagnostics = (
       ]),
     ).values(),
   ].sort((left, right) =>
-    `${left.code}:${left.detail}`.localeCompare(
+    compareUnicodeCodePoints(
+      `${left.code}:${left.detail}`,
       `${right.code}:${right.detail}`,
     ),
   );
-
-export const hasObligationDiagnostic = (
-  diagnostics: readonly Diagnostic[],
-  code: Diagnostic["code"],
-): boolean => diagnostics.some((diagnostic) => diagnostic.code === code);
 
 export const contradictionDiagnostics = (
   obligationId: string,

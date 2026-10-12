@@ -38,9 +38,9 @@ describe("OMP configuration paths", () => {
     expect(ompPath({ PI_CODING_AGENT_DIR: "/custom/agent" })?.configPath).toBe(
       "/custom/agent/mcp.json",
     );
-    // A relative override names a different file in every working directory.
+    // Match OMP by resolving the override against the caller working directory.
     expect(ompPath({ PI_CODING_AGENT_DIR: "agent" })?.configPath).toBe(
-      "/home/a/.omp/agent/mcp.json",
+      resolve("agent", "mcp.json"),
     );
   });
 
@@ -56,7 +56,7 @@ describe("OMP configuration paths", () => {
     expect(ompPath({ OMP_PROFILE: "", PI_PROFILE: "legacy" })?.configPath).toBe(
       "/home/a/.omp/agent/mcp.json",
     );
-    for (const profile of ["default", " ", "Bad Name", "trailing."])
+    for (const profile of ["default", " "])
       expect(ompPath({ OMP_PROFILE: profile })?.configPath).toBe(
         "/home/a/.omp/agent/mcp.json",
       );

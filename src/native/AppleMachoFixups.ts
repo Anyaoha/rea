@@ -6,6 +6,11 @@ import type { DecodeIssue } from "./AppleDispatchDecodeFacts.js";
 export interface FixupCommands {
   /** Absolute file range of `LC_DYLD_CHAINED_FIXUPS` data. */
   readonly chained: { readonly offset: number; readonly size: number } | null;
+  /** Absolute file ranges of `LC_DYLD_INFO(_ONLY)` rebase streams. */
+  readonly rebases: readonly {
+    readonly offset: number;
+    readonly size: number;
+  }[];
   /** Absolute file ranges of `LC_DYLD_INFO(_ONLY)` bind streams. */
   readonly binds: readonly {
     readonly offset: number;
@@ -35,6 +40,10 @@ export interface PointerFixups {
   readonly formats: readonly string[];
   readonly failures: readonly string[];
   readonly issues: readonly DecodeIssue[];
+  /** Fixup segments or bind streams this reader walked. */
+  readonly examined: number;
+  /** Rebase opcode bytes present in the load command and not decoded. */
+  readonly unreadRebaseBytes: number;
   /** Decode the pointer stored at `address` whose raw 64-bit value is `raw`. */
   decode(address: bigint, raw: bigint): DecodedPointer;
 }
@@ -58,6 +67,13 @@ interface Import {
   readonly library: string | null;
   readonly weak: boolean;
   readonly addend: bigint;
+}
+
+interface BindRun {
+  readonly start: bigint;
+  count: bigint;
+  readonly stride: bigint;
+  readonly binding: Import;
 }
 
 /** Library ordinal to install name; 0 and negative ordinals are special lookups. */
@@ -250,6 +266,8 @@ const chainedFixups = (
     formats,
     failures: issues.map(({ message }) => message),
     issues,
+    examined: Math.max(ranges.length, 1),
+    unreadRebaseBytes: 0,
     decode(address, raw) {
       const segment = ranges.find(
         ({ from, to }) => address >= from && address < to,
@@ -296,6 +314,7 @@ const sleb = (bytes: Buffer, cursor: { at: number }, end: number): bigint => {
 /** Registers of the `LC_DYLD_INFO` bind state machine. */
 interface BindState {
   ordinal: number;
+  segmentIndex: number;
   symbol: string;
   weak: boolean;
   addend: bigint;
@@ -340,6 +359,7 @@ const setBindRegister = (
       const segment = image.segments[immediate];
       if (segment === undefined)
         throw new RangeError("Bind segment index is out of range");
+      state.segmentIndex = immediate;
       state.address = segment.address + uleb(bytes, cursor, end);
       return true;
     }
@@ -357,7 +377,7 @@ const setBindRegister = (
 const readBindStream = (
   image: FixupImage,
   range: FixupCommands["binds"][number],
-  binds: Map<bigint, Import>,
+  binds: BindRun[],
 ): void => {
   const { bytes } = image;
   const end = range.offset + range.size;
@@ -366,13 +386,27 @@ const readBindStream = (
   const cursor = { at: range.offset };
   const state: BindState = {
     ordinal: 0,
+    segmentIndex: -1,
     symbol: "",
     weak: false,
     addend: 0n,
     address: 0n,
   };
-  const bind = (skip: bigint): void => {
-    binds.set(state.address, {
+  const preflightRun = (count: bigint, skip: bigint): void => {
+    if (count === 0n) return;
+    const segment = image.segments[state.segmentIndex];
+    if (segment === undefined)
+      throw new RangeError("Bind location has no selected segment");
+    const stride = 8n + skip;
+    const end = state.address + (count - 1n) * stride + 8n;
+    if (state.address < segment.address || end > segment.address + segment.size)
+      throw new RangeError("Bind expansion leaves its file-backed segment");
+  };
+  const bind = (count: bigint, skip: bigint): void => {
+    if (count === 0n) return;
+    preflightRun(count, skip);
+    const stride = 8n + skip;
+    const binding: Import = {
       symbol: state.symbol,
       library:
         range.stream === "weak"
@@ -380,8 +414,22 @@ const readBindStream = (
           : libraryName(state.ordinal, image.dylibs),
       weak: state.weak,
       addend: state.addend,
-    });
-    state.address += 8n + skip;
+    };
+    const previous = binds.at(-1);
+    if (
+      previous !== undefined &&
+      previous.stride === stride &&
+      previous.start + previous.count * stride === state.address &&
+      previous.binding.symbol === binding.symbol &&
+      previous.binding.library === binding.library &&
+      previous.binding.weak === binding.weak &&
+      previous.binding.addend === binding.addend
+    ) {
+      previous.count += count;
+    } else {
+      binds.push({ start: state.address, count, stride, binding });
+    }
+    state.address += count * stride;
   };
   while (cursor.at < end) {
     const byte = bytes[cursor.at++] ?? 0;
@@ -392,18 +440,22 @@ const readBindStream = (
         if (range.stream !== "lazy") return;
         break;
       case 0x90:
-        bind(0n);
+        bind(1n, 0n);
         break;
       case 0xa0:
-        bind(uleb(bytes, cursor, end));
+        bind(1n, uleb(bytes, cursor, end));
         break;
       case 0xb0:
-        bind(BigInt(byte & 0x0f) * 8n);
+        bind(1n, BigInt(byte & 0x0f) * 8n);
         break;
       case 0xc0: {
+        if (range.stream === "lazy")
+          throw new RangeError(
+            "Lazy bind streams do not support repeated bind opcodes",
+          );
         const count = uleb(bytes, cursor, end);
         const skip = uleb(bytes, cursor, end);
-        for (let index = 0n; index < count; index++) bind(skip);
+        bind(count, skip);
         break;
       }
       default:
@@ -420,16 +472,27 @@ export const parsePointerFixups = (
   baseAddress: bigint,
 ): PointerFixups => {
   const image = { bytes, segments, dylibs: commands.dylibs, baseAddress };
-  if (commands.chained !== null) return chainedFixups(image, commands.chained);
+  const unreadRebaseBytes = commands.rebases.reduce(
+    (total, rebase) => total + rebase.size,
+    0,
+  );
+  if (commands.chained !== null) {
+    const chained = chainedFixups(image, commands.chained);
+    return unreadRebaseBytes === 0
+      ? chained
+      : { ...chained, unreadRebaseBytes };
+  }
   if (commands.binds.length === 0)
     return {
       kind: "none",
       formats: [],
       failures: [],
       issues: [],
+      examined: 0,
+      unreadRebaseBytes,
       decode: (_address, raw) => ({ kind: "rebase", target: raw }),
     };
-  const binds = new Map<bigint, Import>();
+  const binds: BindRun[] = [];
   const failures: string[] = [];
   for (const stream of commands.binds)
     try {
@@ -446,11 +509,29 @@ export const parsePointerFixups = (
     issues: failures.map((message) =>
       issue("pointer_fixups", "bind_stream_decode_failed", message),
     ),
+    examined: commands.binds.length,
+    unreadRebaseBytes,
     decode(address, raw) {
-      const bound = binds.get(address);
-      return bound === undefined
+      let match: BindRun | undefined;
+      for (const run of binds) {
+        const { start, count, stride } = run;
+        const distance = address - start;
+        if (
+          distance >= 0n &&
+          distance % stride === 0n &&
+          distance / stride < count
+        ) {
+          if (match !== undefined)
+            return {
+              kind: "unsupported",
+              reason: `Ambiguous bind records target pointer location 0x${address.toString(16)}`,
+            };
+          match = run;
+        }
+      }
+      return match === undefined
         ? { kind: "rebase", target: raw }
-        : { kind: "bind", ...bound };
+        : { kind: "bind", ...match.binding };
     },
   };
 };

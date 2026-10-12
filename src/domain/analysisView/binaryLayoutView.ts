@@ -149,9 +149,25 @@ const layoutSummary = (layout: BinaryLayout) => ({
 export const projectBinaryLayoutView = (
   parent: AnalysisViewParent,
   layout: BinaryLayout,
-  view: AnalysisViewRequest,
+  view: Exclude<AnalysisViewRequest, { kind: "api-surface" }>,
 ): Result<UnsignedAnalysisView, AnalysisError> => {
   const shared = parentFields(parent, layout);
+  if (view.kind === "native")
+    return err(
+      layoutIncompatible("Native views require analyze_function Evidence."),
+    );
+  if (view.kind === "inventory")
+    return err(
+      layoutIncompatible("Inventory views require artifact Evidence."),
+    );
+  if (view.kind === "wasm")
+    return err(
+      layoutIncompatible("WASM views require inspect_wasm_artifact Evidence."),
+    );
+  if (view.kind === "evm")
+    return err(
+      layoutIncompatible("EVM views require inspect_evm_interface Evidence."),
+    );
   if (view.kind === "summary")
     return ok({
       kind: "summary",

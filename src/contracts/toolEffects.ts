@@ -7,7 +7,17 @@ export interface ToolEffects {
   readonly launchesProcess: boolean;
   readonly accessesNetwork: boolean;
   readonly changesUiState: boolean;
+  /** Can overwrite, clear, or drop state that the caller cannot recover from REA. */
   readonly mayDiscardData: boolean;
+  /**
+   * Runs or drives code REA does not own on the host: the analysis target, a
+   * caller-selected executable, or the application loaded into one. Running
+   * REA's own pinned helpers or operator-configured analysis engines does not
+   * count.
+   */
+  readonly executesForeignCode: boolean;
+  /** Changes an attached Android device: packages, files, or running apps. */
+  readonly mutatesDevice: boolean;
   readonly idempotent: boolean;
 }
 
@@ -27,6 +37,8 @@ const effects = (overrides: Partial<ToolEffects> = {}): ToolEffects => ({
   accessesNetwork: false,
   changesUiState: false,
   mayDiscardData: false,
+  executesForeignCode: false,
+  mutatesDevice: false,
   idempotent: true,
   ...overrides,
 });
@@ -41,6 +53,27 @@ const sessionEvidence = effects({ mutatesSession: true });
 
 /** Explicit effect audit for every public tool. */
 export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
+  inspect_go_binary: evidence,
+  inspect_sqlite_database: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+  }),
+  inspect_packet_capture: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+  }),
+  decode_signal_recording: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+  }),
+  inspect_wasm_artifact: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+  }),
   inspect_evm_interface: effects({
     mutatesSession: true,
     writesFilesystem: true,
@@ -80,6 +113,58 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     writesFilesystem: true,
     launchesProcess: true,
   }),
+  list_frida_devices: effects({ launchesProcess: true, accessesNetwork: true }),
+  list_frida_processes: effects({
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  start_frida_session: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  load_frida_script: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  resume_frida_session: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  unload_frida_script: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  frida_session_status: effects(),
+  close_frida_session: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  instrument_with_frida: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  inspect_pe_resources: evidence,
   inspect_analysis_view: evidence,
   inspect_firmware_regions: effects({
     mutatesSession: true,
@@ -96,6 +181,186 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     mutatesSession: true,
     launchesProcess: true,
     writesFilesystem: true,
+  }),
+  identify_flutter_build: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+  }),
+  inspect_dart_aot: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+  }),
+  inspect_apktool_client: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+  }),
+  decode_android_resources: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+  }),
+  inspect_jeb_client: effects({
+    mutatesSession: true,
+    accessesNetwork: true,
+  }),
+  open_jeb_project: effects({
+    mutatesSession: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  list_jeb_units: effects({
+    mutatesSession: true,
+    accessesNetwork: true,
+  }),
+  decompile_jeb_item: effects({
+    mutatesSession: true,
+    accessesNetwork: true,
+  }),
+  inspect_adb_client: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+  }),
+  list_adb_devices: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  inspect_adb_device: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  list_adb_packages: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  pull_adb_package: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  read_adb_logcat: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  inspect_adb_package: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  pull_adb_file: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  push_adb_file: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+    accessesNetwork: true,
+    mutatesDevice: true,
+    idempotent: false,
+  }),
+  capture_adb_screen: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  list_adb_processes: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  list_adb_directory: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  list_adb_features: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  list_adb_services: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  inspect_adb_display: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  inspect_adb_window: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  read_adb_setting: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  collect_adb_bugreport: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  resolve_adb_packages: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  install_adb_package: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    mutatesDevice: true,
+    idempotent: false,
+  }),
+  uninstall_adb_package: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    mutatesDevice: true,
+    idempotent: false,
+  }),
+  start_adb_app: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    mutatesDevice: true,
+    idempotent: false,
+  }),
+  start_adb_activity: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    mutatesDevice: true,
+    idempotent: false,
+  }),
+  stop_adb_app: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    mutatesDevice: true,
+    idempotent: false,
   }),
   search_android_classes: effects({
     mutatesSession: true,
@@ -122,6 +387,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     mutatesSession: true,
     launchesProcess: true,
     writesFilesystem: true,
+    mayDiscardData: true,
   }),
   inspect_native_load_image: evidence,
   inspect_native_dispatch_metadata: evidence,
@@ -158,11 +424,31 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   resolve_containing_procedure: evidence,
   search_procedures: evidence,
   search_strings: evidence,
-  set_address_name: effects({ mutatesTarget: true, mutatesSession: true }),
-  set_addresses_names: effects({ mutatesTarget: true, mutatesSession: true }),
-  set_bookmark: effects({ mutatesTarget: true, mutatesSession: true }),
-  set_comment: effects({ mutatesTarget: true, mutatesSession: true }),
-  set_inline_comment: effects({ mutatesTarget: true, mutatesSession: true }),
+  set_address_name: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    mayDiscardData: true,
+  }),
+  set_addresses_names: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    mayDiscardData: true,
+  }),
+  set_bookmark: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    mayDiscardData: true,
+  }),
+  set_comment: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    mayDiscardData: true,
+  }),
+  set_inline_comment: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    mayDiscardData: true,
+  }),
   unset_bookmark: effects({
     mutatesTarget: true,
     mutatesSession: true,
@@ -193,6 +479,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     accessesNetwork: true,
     changesUiState: true,
     mayDiscardData: true,
+    executesForeignCode: true,
     idempotent: false,
   }),
   // The owned process can change files, show UI and use the network.
@@ -202,6 +489,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     launchesProcess: true,
     accessesNetwork: true,
     changesUiState: true,
+    executesForeignCode: true,
     idempotent: false,
   }),
   inspect_macho: nativeEvidence,
@@ -247,6 +535,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     accessesNetwork: true,
     changesUiState: true,
     mayDiscardData: true,
+    executesForeignCode: true,
     idempotent: false,
   }),
   list_electron_targets: browserEvidence,
@@ -259,6 +548,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     accessesNetwork: true,
     changesUiState: true,
     mayDiscardData: true,
+    executesForeignCode: true,
     idempotent: false,
   }),
   list_javascript_runtime_targets: browserEvidence,
@@ -285,6 +575,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   evaluate_reconstruction_coverage: effects(),
   project_android_application_graph: evidence,
   project_apple_application_graph: evidence,
+  project_harmony_application_graph: evidence,
   open_binary: effects({ mutatesSession: true, launchesProcess: true }),
   close_binary: effects({
     mutatesSession: true,
@@ -306,6 +597,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     writesFilesystem: true,
     launchesProcess: true,
     accessesNetwork: true,
+    executesForeignCode: true,
     idempotent: false,
   }),
   compare_process_captures: sessionEvidence,
@@ -333,12 +625,43 @@ export const annotationsFromEffects = (
     value.launchesProcess ||
     value.accessesNetwork ||
     value.changesUiState ||
-    value.mayDiscardData
+    value.mayDiscardData ||
+    value.executesForeignCode ||
+    value.mutatesDevice
   ),
-  destructiveHint: value.mayDiscardData,
+  // MCP defines destructive as possibly non-additive changes to the
+  // environment. Running foreign code or changing a device cannot be bounded
+  // to additive effects, so either one is destructive even without data loss.
+  destructiveHint:
+    value.mayDiscardData || value.executesForeignCode || value.mutatesDevice,
   idempotentHint: value.idempotent,
   openWorldHint: value.launchesProcess || value.accessesNetwork,
 });
+
+/**
+ * Tools whose results, successful or failed, carry only REA-authored session
+ * state or caller-supplied values, never text originating from an analysis
+ * target, a provider, a launcher or a device. Every other tool can return
+ * such text (strings, symbols, code, page text, scripts, captures, logs, file
+ * listings, provider diagnostics or captured process output), so a newly
+ * added tool is marked untrusted until it is audited into this set. A tool
+ * stays out when any error path can project external process output, as
+ * close_binary (provider cleanup diagnostics), binary_session (provider
+ * failure reasons and availability diagnostics) and the adb and apktool
+ * client probes (version output and stderr excerpts) can.
+ */
+export const TARGET_CONTENT_FREE_TOOLS: ReadonlySet<string> = new Set([
+  "export_evidence_bundle",
+  "record_unknown",
+]);
+
+/**
+ * Whether results of the named tool, successful or failed, can carry text that
+ * originates from the analysis target. Unknown names are treated as target
+ * content so an unaudited path never loses the untrusted marker.
+ */
+export const toolReturnsTargetContent = (name: string): boolean =>
+  !TARGET_CONTENT_FREE_TOOLS.has(name);
 
 /** Resolve the audited metadata for one public tool. */
 export const toolContractMetadata = (name: string) => {
@@ -352,5 +675,6 @@ export const toolContractMetadata = (name: string) => {
       .join(" "),
     effects: audited,
     annotations: annotationsFromEffects(audited),
+    returnsTargetContent: toolReturnsTargetContent(name),
   };
 };
