@@ -5,7 +5,10 @@ import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { createEvidenceToolHandler } from "./contractToolHandler.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import {
+  applicationToolRegistrationOptions,
+  toolRegistrationOptions,
+} from "./toolRegistrationOptions.js";
 
 /** Bind the named signal contract through shared admission and retained Evidence delivery. */
 export const registerSignalTools = (
@@ -25,7 +28,20 @@ export const registerSignalTools = (
   );
   server.registerTool(
     contract.name,
-    toolRegistrationOptions(contract),
+    applicationToolRegistrationOptions(contract),
     handler(contract),
+  );
+  const discovery = toolContract("inspect_signal_decoders");
+  const discover = createEvidenceToolHandler(
+    server,
+    (input, options) => service.inspectDecoders(input, options),
+    logger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  server.registerTool(
+    discovery.name,
+    toolRegistrationOptions(discovery),
+    discover(discovery),
   );
 };

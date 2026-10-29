@@ -1,3 +1,4 @@
+import { IDA_COMPATIBILITY_PROFILES } from "../../../src/ida/IdaConfiguration.js";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,9 +11,9 @@ import {
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -29,15 +30,25 @@ const parametersFor = (
   operation: string,
 ): Readonly<Record<string, JsonValue>> => {
   if (operation.startsWith("search_")) return { pattern: "a.b" };
-  if (operation === "xrefs") return { address: "0x1000" };
+  if (operation === "xrefs" || operation === "resolve_containing_procedure")
+    return { address: "0x1000" };
   if (operation.startsWith("list_")) return {};
   return { procedure: "main" };
 };
 
+/** Operations only the headless profile declares. */
+const HEADLESS_ONLY: ReadonlySet<string> = new Set([
+  "resolve_containing_procedure",
+  "list_documents",
+]);
+
 describe.each(["attached", "headless"] as const)(
   "IDA %s caller-visible contracts",
   (mode) => {
-    it.each(IDA_OPERATIONS)(
+    const operations = IDA_OPERATIONS.filter(
+      (operation) => mode === "headless" || !HEADLESS_ONLY.has(operation),
+    );
+    it.each(operations)(
       "declares %s UI effects matching the upstream tools it reaches",
       async (operation) => {
         const { root, target } = await createIdaTarget();
@@ -60,16 +71,17 @@ describe.each(["attached", "headless"] as const)(
         } finally {
           await client.close();
         }
-        const descriptor = idaCapabilities(mode, true).find(
-          (capability) => capability.operation === operation,
-        );
+        const descriptor = idaCapabilities(
+          IDA_COMPATIBILITY_PROFILES[mode === "attached" ? "legacy" : "modern"],
+          true,
+        ).find((capability) => capability.operation === operation);
         expect(descriptor?.effects.mayShowUi).toBe(
           producer.calls.some(({ name }) => GUI_NAVIGATING_TOOLS.has(name)),
         );
       },
     );
 
-    it.each(IDA_OPERATIONS)(
+    it.each(operations)(
       "serializes %s against its named advertised output contract",
       async (operation) => {
         const { root, target } = await createIdaTarget();

@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
+import { uniqueSorted } from "./canonicalOrdering.js";
 import { z } from "zod";
+import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
   compareUnicodeCodePoints,
   compositeKey,
@@ -12,7 +11,7 @@ import { functionComparisonDimensionNameSchema } from "./functionComparisonSchem
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const unknownIdSchema = prefixedDigestSchema("unk");
 const text = z.string().trim().min(1);
-const environmentRequirementSchema = z.object({
+const environmentRequirementSchema = z.strictObject({
   id: z.string().min(1).nullable(),
   platform: z.string().min(1).nullable(),
   architecture: z.string().min(1).nullable(),
@@ -26,20 +25,19 @@ const stableUnknownId = (
   scopeDigest: string | null,
   comparisonConclusionScope?: z.infer<typeof comparisonConclusionScopeSchema>,
 ): string =>
-  `unk_${createHash("sha256")
-    .update(
-      canonicalJson({
-        domain: domain.trim(),
-        question: question.replace(/\s+/gu, " ").trim(),
-        scope_digest: scopeDigest,
-        ...(comparisonConclusionScope === undefined
-          ? {}
-          : { comparison_conclusion_scope: comparisonConclusionScope }),
-      }),
-    )
-    .digest("hex")}`;
+  `unk_${digestCanonicalValue(
+    {
+      domain: domain.trim(),
+      question: question.replace(/\s+/gu, " ").trim(),
+      scope_digest: scopeDigest,
+      ...(comparisonConclusionScope === undefined
+        ? {}
+        : { comparison_conclusion_scope: comparisonConclusionScope }),
+    },
+    "Unknown identity",
+  )}`;
 
-const probeSchema = z.object({
+const probeSchema = z.strictObject({
   operation: z.string().min(1),
   rationale: text,
 });
@@ -54,23 +52,23 @@ const comparisonConclusionScopeSchema = z
   })
   .strict()
   .superRefine(({ dimensions }, context) => {
-    if (!sameOrderedValues(dimensions, sortedUnique(dimensions)))
+    if (!sameOrderedValues(dimensions, uniqueSorted(dimensions)))
       context.addIssue({
         code: "custom",
         message: "Comparison dimensions must be sorted and unique",
       });
   });
-const relationshipSchema = z.object({
+const relationshipSchema = z.strictObject({
   type: z.enum(["depends-on", "related-to", "contradicts"]),
   unknown_id: unknownIdSchema,
 });
 const resolutionSchema = z.discriminatedUnion("disposition", [
-  z.object({
+  z.strictObject({
     disposition: z.literal("verified"),
     rationale: text,
     evidence_ids: z.array(evidenceIdSchema).min(1),
   }),
-  z.object({
+  z.strictObject({
     disposition: z.enum(["withdrawn", "out-of-scope"]),
     rationale: text,
     evidence_ids: z.array(evidenceIdSchema),
@@ -78,9 +76,9 @@ const resolutionSchema = z.discriminatedUnion("disposition", [
 ]);
 
 /** Strict durable record for one unresolved or evidence-qualified question. */
-const residualUnknownObjectSchema = z.object({
+const residualUnknownObjectSchema = z.strictObject({
   unknown_id: unknownIdSchema,
-  revision: z.number().int().min(1),
+  revision: z.int().min(1),
   previous_revision_digest: z
     .string()
     .regex(/^[a-f0-9]{64}$/u)
@@ -223,7 +221,7 @@ const refineRevision = (value: UnknownRevision, context: z.RefinementCtx) => {
     });
 };
 
-const residualUnknownValidatedSchema = residualUnknownObjectSchema.superRefine(
+export const residualUnknownSchema = residualUnknownObjectSchema.superRefine(
   (value, context) => {
     if (computeRevisionDigest(value) !== value.revision_digest)
       context.addIssue({
@@ -234,8 +232,6 @@ const residualUnknownValidatedSchema = residualUnknownObjectSchema.superRefine(
     refineRevision(value, context);
   },
 );
-
-export const residualUnknownSchema = residualUnknownValidatedSchema;
 
 const generatedRevisionSchema = residualUnknownObjectSchema
   .omit({ revision_digest: true })
@@ -268,7 +264,7 @@ export type RecordUnknownInput = z.infer<typeof recordUnknownInputSchema>;
 /** Explicit optimistic-concurrency update command for one unknown. */
 export const updateUnknownInputSchema = z.strictObject({
   unknown_id: unknownIdSchema,
-  expected_revision: z.number().int().min(1),
+  expected_revision: z.int().min(1),
   status: residualUnknownObjectSchema.shape.status,
   severity: residualUnknownObjectSchema.shape.severity,
   supporting_evidence_ids: z.array(evidenceIdSchema),
@@ -342,7 +338,7 @@ export const updateResidualUnknown = (
       : { comparison_conclusion_scope: current.comparison_conclusion_scope }),
     ...projectRevisionDetails(input),
     resolution: input.resolution,
-    mutation_evidence_ids: sortedUnique([
+    mutation_evidence_ids: uniqueSorted([
       ...current.mutation_evidence_ids,
       mutationEvidenceId,
     ]),
@@ -370,8 +366,8 @@ type RevisionDetailsInput = Pick<
 
 const projectRevisionDetails = (input: RevisionDetailsInput) => ({
   severity: input.severity,
-  supporting_evidence_ids: sortedUnique(input.supporting_evidence_ids),
-  contradicting_evidence_ids: sortedUnique(input.contradicting_evidence_ids),
+  supporting_evidence_ids: uniqueSorted(input.supporting_evidence_ids),
+  contradicting_evidence_ids: uniqueSorted(input.contradicting_evidence_ids),
   required_authority: input.required_authority,
   required_confidence: input.required_confidence,
   required_environment: input.required_environment,
@@ -385,17 +381,9 @@ const computeRevisionDigest = (
   const { revision_digest: _revisionDigest, ...semantic } =
     "revision_digest" in value ? value : { ...value, revision_digest: "" };
   void _revisionDigest;
-  return createHash("sha256").update(canonicalJson(semantic)).digest("hex");
+  return digestCanonicalValue(semantic, "Unknown identity");
 };
 
-const canonicalJson = (value: unknown): string => {
-  const serialized = canonicalize(value);
-  if (serialized === undefined) throw new TypeError("Unknown identity failed");
-  return serialized;
-};
-
-const sortedUnique = (values: readonly string[]): string[] =>
-  [...new Set(values)].sort(compareUnicodeCodePoints);
 const sameOrderedValues = (
   left: readonly string[],
   right: readonly string[],

@@ -1,4 +1,5 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, expect, it } from "vitest";
@@ -34,6 +35,12 @@ import {
 } from "../../support/workspace/workspaceFixture.js";
 import { z } from "zod";
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
+import { Il2cppMetadataService } from "../../../src/application/il2cpp/Il2cppMetadataService.js";
+import { WebNetworkCaptureService } from "../../../src/application/WebNetworkCaptureService.js";
+import { AnalysisUnsupportedTargetError } from "../../../src/domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import type { JavaScriptRuntimeObservationPort } from "../../../src/application/javascript/JavaScriptRuntimeObservationPort.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -202,9 +209,7 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         arguments: {},
       });
       expect(bundle.isError).not.toBe(true);
-      expect(JSON.stringify(bundle.structuredContent)).toContain(
-        error.details.partial_observation.evidence_id,
-      );
+      expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(retained);
     } finally {
       removalAllowed = true;
       await client.close();
@@ -332,6 +337,195 @@ it("awaits SQLite cleanup and retries its retained owner after failed server shu
   }
   await server.close();
   expect(attempts).toBe(2);
+});
+
+it("closes the bound Go, IL2CPP and web-capture services and retries failed shutdown", async () => {
+  let goCalls = 0;
+  let goCloseAttempts = 0;
+  let il2cppCloseAttempts = 0;
+  let captureCloseAttempts = 0;
+  let scenarioCloseAttempts = 0;
+  let cleanupAllowed = false;
+  const goBinary = new GoBinaryService({
+    identity: { id: "go-fixture", name: "Go fixture", version: "1" },
+    inspect: async ({ path }) => {
+      goCalls += 1;
+      return err(
+        new AnalysisUnsupportedTargetError(
+          "inspect_go_binary",
+          path,
+          "fixture rejection",
+        ),
+      );
+    },
+    close: async () => {
+      goCloseAttempts += 1;
+      if (!cleanupAllowed) throw new Error("Go cleanup refused");
+    },
+  });
+  const il2cppMetadata = new Il2cppMetadataService({
+    identity: { id: "il2cpp-fixture", name: "IL2CPP fixture", version: "1" },
+    inspect: async () => {
+      throw new Error("No metadata inspection requested");
+    },
+    close: async () => {
+      il2cppCloseAttempts += 1;
+      if (!cleanupAllowed) throw new Error("IL2CPP cleanup refused");
+    },
+  });
+  const webNetworkCapture = new WebNetworkCaptureService({
+    inspect: async () => {
+      throw new Error("No capture inspection requested");
+    },
+    close: async () => {
+      captureCloseAttempts += 1;
+      if (!cleanupAllowed) throw new Error("Capture cleanup refused");
+    },
+  });
+  const server = createServer(
+    { kind: "fixed", analysis: { execute: async () => ok(null) } },
+    {
+      goBinary,
+      il2cppMetadata,
+      webNetworkCapture,
+      browserScenarioCapture: {
+        identity: () => ({
+          id: "scenario-fixture",
+          name: "Scenario fixture",
+          version: "1",
+        }),
+        captureScenario: async () => {
+          throw new Error("No scenario capture requested");
+        },
+        close: async () => {
+          scenarioCloseAttempts += 1;
+          if (!cleanupAllowed) throw new Error("Scenario cleanup refused");
+        },
+      },
+    },
+  );
+  const client = new Client({ name: "bound-service-lifecycle", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(client, server);
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const result = await client.callTool({
+      name: "inspect_go_binary",
+      arguments: { path: "/tmp/go-fixture" },
+    });
+    expect(result.isError).toBe(true);
+    expect(goCalls).toBe(1);
+
+    await expect(server.close()).rejects.toMatchObject({
+      errors: expect.arrayContaining([
+        expect.objectContaining({ message: "Scenario cleanup refused" }),
+      ]),
+    });
+    expect(goCloseAttempts).toBe(1);
+    expect(il2cppCloseAttempts).toBe(1);
+    expect(captureCloseAttempts).toBe(1);
+    expect(scenarioCloseAttempts).toBe(1);
+
+    cleanupAllowed = true;
+    await server.close();
+    expect(goCloseAttempts).toBe(2);
+    expect(il2cppCloseAttempts).toBe(2);
+    expect(captureCloseAttempts).toBe(2);
+    expect(scenarioCloseAttempts).toBe(2);
+  } finally {
+    cleanupAllowed = true;
+  }
+});
+
+it("closes the Inspector owner with peers and retries its retained cleanup", async () => {
+  let inspectorCloseAttempts = 0;
+  let peerCloseAttempts = 0;
+  const cleanupFailure = new ProviderCleanupError(
+    "rea-v8-inspector",
+    ["browser_transport"],
+    { reason: "Inspector transport close is still pending" },
+    { operation: "observe_javascript_runtime" },
+  );
+  const runtime: JavaScriptRuntimeObservationPort = {
+    identity: () => ({
+      id: "rea-v8-inspector",
+      name: "V8 Inspector",
+      version: "1",
+    }),
+    listTargets: async () => {
+      throw new Error("No target listing requested");
+    },
+    observe: async () => {
+      throw new Error("No runtime observation requested");
+    },
+    close: async () => {
+      inspectorCloseAttempts += 1;
+      if (inspectorCloseAttempts === 1) throw cleanupFailure;
+    },
+  };
+  const server = createServer(
+    { kind: "fixed", analysis: { execute: async () => ok(null) } },
+    {
+      javascriptRuntimeObservation: runtime,
+      browserScenarioCapture: {
+        identity: () => ({
+          id: "scenario-fixture",
+          name: "Scenario fixture",
+          version: "1",
+        }),
+        captureScenario: async () => {
+          throw new Error("No scenario capture requested");
+        },
+        close: async () => {
+          peerCloseAttempts += 1;
+        },
+      },
+    },
+  );
+  resources.push(server);
+
+  await expect(server.close()).rejects.toMatchObject({
+    errors: expect.arrayContaining([cleanupFailure]),
+  });
+  expect(inspectorCloseAttempts).toBe(1);
+  expect(peerCloseAttempts).toBe(1);
+
+  await server.close();
+  expect(inspectorCloseAttempts).toBe(2);
+  expect(peerCloseAttempts).toBe(2);
+});
+
+it("does not close a caller-owned Inspector observation provider", async () => {
+  let closeAttempts = 0;
+  const runtime: JavaScriptRuntimeObservationPort = {
+    identity: () => ({
+      id: "rea-v8-inspector",
+      name: "V8 Inspector",
+      version: "1",
+    }),
+    listTargets: async () => {
+      throw new Error("No target listing requested");
+    },
+    observe: async () => {
+      throw new Error("No runtime observation requested");
+    },
+    close: async () => {
+      closeAttempts += 1;
+    },
+  };
+  const server = createServer(
+    { kind: "fixed", analysis: { execute: async () => ok(null) } },
+    {
+      javascriptRuntimeObservation: runtime,
+      optionalObservationProviderOwner: "caller",
+    },
+  );
+  resources.push(server);
+
+  await server.close();
+  expect(closeAttempts).toBe(0);
 });
 
 afterEach(async () => {

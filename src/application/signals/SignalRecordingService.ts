@@ -1,27 +1,33 @@
-import { isAbsolute } from "node:path";
+import {
+  inspectSignalDecodersInputSchema,
+  signalDecodersSchema,
+  type InspectSignalDecodersInput,
+} from "../../domain/signals/signalDecoders.js";
 import type {
   AnalysisExecution,
   ExecutionOptions,
 } from "../AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   decodeSignalRecordingInputSchema,
   signalRecordingSchema,
   type DecodeSignalRecordingInput,
 } from "../../domain/signals/signalRecording.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
+import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 export interface SignalRecordingPort {
   /** Release per-call resources before returning, or retain failed cleanup for close/retry. */
   decode(
     input: DecodeSignalRecordingInput,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError>>;
+  inspectDecoders(
+    input: InspectSignalDecodersInput,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>>;
   close(): Promise<void>;
@@ -38,35 +44,23 @@ export class SignalRecordingService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     const operation = "decode_signal_recording";
-    if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(operation));
-    const input = decodeSignalRecordingInputSchema.safeParse(raw);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(operation, input.error.issues, raw, {
-          cause: input.error,
-        }),
-      );
-    if (!isAbsolute(input.data.path))
-      return err(
-        new AnalysisInputError(operation, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute local path.",
-          },
-        ]),
-      );
-    const decoded = await this.provider.decode(input.data, options);
+    const input = parseAnalysisInput(
+      operation,
+      raw,
+      decodeSignalRecordingInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const decoded = await this.provider.decode(input.value, options);
     if (!decoded.ok) return decoded;
     const execution = decoded.value;
     const report = signalRecordingSchema.safeParse(execution.result);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
-      execution.subject?.path !== input.data.path ||
+      report.data.artifact.path !== input.value.path ||
+      execution.subject?.path !== input.value.path ||
       execution.subject.sha256 !== report.data.artifact.sha256 ||
-      JSON.stringify(report.data.selection) !== JSON.stringify(input.data)
+      JSON.stringify(report.data.selection) !== JSON.stringify(input.value)
     )
       return err(
         new AnalysisOutputError(
@@ -74,20 +68,52 @@ export class SignalRecordingService {
           "Decoder returned malformed data or changed the selected recording identity/options.",
         ),
       );
-    const evidence = createEvidence(execution.subject, execution.provider, {
+    return completeProviderEvidence(
+      createAnalysisExecutionEvidence(
+        operation,
+        input.value,
+        execution,
+        "observed",
+      ),
+      options?.signal,
+    );
+  }
+  async inspectDecoders(
+    raw: unknown,
+    options?: ExecutionOptions,
+  ): Promise<Result<Evidence, AnalysisError>> {
+    const operation = "inspect_signal_decoders";
+    const input = parseAnalysisInput(
       operation,
-      parameters: input.data,
-      result: report.data,
-      confidence: "observed",
-      locations: execution.locations,
-      limitations: execution.limitations,
-    });
-    return options?.signal?.aborted
-      ? err(
-          new AnalysisCancelledError(operation, {
-            partialObservation: evidence,
-          }),
-        )
-      : ok(evidence);
+      raw,
+      inspectSignalDecodersInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const decoded = await this.provider.inspectDecoders(input.value, options);
+    if (!decoded.ok) return decoded;
+    const execution = decoded.value;
+    const report = signalDecodersSchema.safeParse(execution.result);
+    if (
+      !report.success ||
+      JSON.stringify(report.data.selection) !== JSON.stringify(input.value) ||
+      execution.subject?.path !== report.data.tool.path ||
+      execution.subject.sha256 !== report.data.tool.sha256
+    )
+      return err(
+        new AnalysisOutputError(
+          operation,
+          "Decoder discovery returned malformed data or changed the selected installation/options.",
+        ),
+      );
+    return completeProviderEvidence(
+      createAnalysisExecutionEvidence(
+        operation,
+        input.value,
+        execution,
+        "observed",
+      ),
+      options?.signal,
+    );
   }
 }

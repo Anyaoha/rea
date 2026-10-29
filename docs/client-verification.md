@@ -1,10 +1,47 @@
 # Client and agent verification
 
+FreeBuff MCP loading and personal skill discovery are currently unverified with
+an installed native client/version. Its temporary-filesystem coverage verifies
+REA's configuration and applicability boundaries only; it does not establish
+that FreeBuff consumes the written registration or skill.
+
 Use these optional lanes to verify an installed client or evaluate an agent's
 REA workflow. [Testing REA](testing.md) provides the normal development commands
 and provider lanes. Each record below states its host, client version, model
 fixture, and remaining coverage; a native-client run with a loopback model does
 not establish live model-service acceptance.
+
+## Launch environment verification
+
+`rea mcp doctor --json` starts the production MCP adapter with the current runtime
+executable and environment. A healthy result establishes that adapter's
+initialization, discovery and target-free request flow; it does not verify a
+client's configured launcher or its inherited environment. Test the generated
+registration through the actual client, including a reduced `PATH` when checking
+desktop or service startup. Record the client version and launch environment
+separately from terminal doctor results. See [launcher troubleshooting](client-configuration.md#launchers-and-path).
+
+## Published Pi code-mode renderer limit
+
+A separate probe of the published `@earendil-works/pi-codemode` 1.1.0 and 1.2.0
+declaration renderers rendered the full `compare_web_captures` input as
+`args: unknown`: its generated TypeScript type exceeds Pi's 16,000-character
+default. REA keeps the full advertisement's fields by inlining references when
+the shared form would exceed Pi's 32-reference expansion limit; retaining that
+shared form would leave later fields unknown instead. The existing
+`REA_MCP_INPUT_SCHEMA_PROFILE=compact` profile lets callers stay below
+its character limit by advertising reduced nested validation structure, while
+REA continues to validate calls against the complete canonical input schema.
+Compact is the default for the server's advertised inputs; an explicit `full`
+choice is preserved. See the [compact input schema profile](mcp-contracts.md#compact-input-schema-profile)
+for details of its reduced forms.
+
+Custom renderer hosts can raise `inputMaxChars` through `renderToolSignature` or
+`renderToolSample`; `renderDeclarations` does not expose that override. The
+probe exercised the published renderer code, not a native Pi host or model, and
+does not establish broader Pi compatibility. See the pinned upstream
+[`declarations.ts`](https://github.com/earendil-works/pi/blob/b45e0ebcc5ae2fc42a6f2f23104d10e656e6bedb/packages/codemode/src/declarations.ts)
+and [renderer usage notes](https://github.com/earendil-works/pi/blob/b45e0ebcc5ae2fc42a6f2f23104d10e656e6bedb/packages/codemode/README.md#declarations-for-the-model).
 
 ## End-to-end, integration and golden evidence
 
@@ -18,13 +55,33 @@ pass `-- chat` to check plain chat with REA enabled. Qwen also reads the full
 result that its client offloads, and Pi exercises default codemode execution.
 Use `REA_VERIFY_RUNTIME_ROOT` to select a production-only installed REA package.
 Receipts retain client versions, result digests, host coverage and owned-process
-cleanup. These POSIX lanes use a deterministic loopback model, so they do not
-prove live model-provider or native Windows compatibility. Qwen, Pi and Hermes
+cleanup. These lanes use a deterministic loopback model and do not prove live
+model-provider compatibility. Pi and Hermes remain POSIX-only. Qwen, Pi and Hermes
 bind both `HOME` and `USERPROFILE` to the disposable account. Qwen and Pi discover
 the shared personal skill through their default search paths without an explicit
 skill setting; Hermes discovers it through the selected `HERMES_HOME`.
 Set `REA_VERIFY_HERMES_STICKY_PROFILE=1` to exercise native Hermes selection of
 a named sticky profile with `HERMES_HOME` still pointing to its root.
+
+For Qwen on POSIX, set `REA_VERIFY_QWEN_REDUCED_PATH=1` and select its JavaScript
+entry point with `REA_VERIFY_QWEN_COMMAND` to test a restricted client environment.
+Setup retains the caller's `PATH`; the native Qwen `chat` or `call` run then uses
+an isolated `PATH` containing only Bash for the shell-tool fixture. The lane
+checks that `node`, `npm` and `npx` cannot be found and uses the generated REA
+registration unchanged. Its receipt records `reducedPath`, `clientPath` and
+`registrationCommand`; the option alone does not establish a passing native run.
+
+The Qwen lane also supports native Windows (verified with Qwen Code 0.25.1 and
+Node 24.19.0 for both `chat` and `call`). With Node 24.18.0, the same `call`
+journey reached full Evidence readback but the client aborted during exit with
+`UV_HANDLE_CLOSING`; that run remains a failure, not a compatibility claim.
+Select the npm install's
+`node_modules/@qwen-code/qwen-code/cli-entry.js` with `REA_VERIFY_QWEN_COMMAND`,
+because `execFile` cannot launch the `qwen.cmd` shim directly. A selected `.js`,
+`.mjs` or `.cjs` entry point runs under the verifier's Node. Windows path checks
+use native separators; persisted output is read through Qwen's real shell tool
+with a shell-independent encoded Node payload. Windows receipts report process
+lineage as unavailable when the verifier has no retained native Job Object lease.
 
 `verify:gemini-client` requires an installed Gemini CLI (verified with
 `@google/gemini-cli@0.63.0` on POSIX and native Windows); select it with
@@ -114,6 +171,12 @@ the complete catalog and full schemas. To verify the existing compact profile:
 REA_VERIFY_COPILOT_MODEL=gpt-4.1 REA_VERIFY_COPILOT_SCHEMA_PROFILE=compact npm run verify:copilot-client -- chat
 REA_VERIFY_COPILOT_MODEL=gpt-4.1 REA_VERIFY_COPILOT_SCHEMA_PROFILE=compact npm run verify:copilot-client -- call
 ```
+
+The verifier explicitly writes either selected profile into its disposable
+registration and compares the input schemas forwarded by Copilot with that
+profile's advertised schemas. A run must not infer `full` from an unset setting:
+REA's runtime default is now `compact`. The recorded client results above remain
+scoped to their executed revisions; this verifier correction is not a new client run.
 
 Both native workflows passed with the complete tool inventory. The verifier selects the
 profile only in its disposable Copilot registration and records it in the
@@ -298,12 +361,41 @@ subsequent wire recovery and clean shutdown. Caller timeout does not interrupt
 Hopper's synchronous native operation. Socket boundary tests deterministically
 cover active and queued expiry, late replies and timer cleanup.
 
-The Linux demo lane remains a separate `verify:hopper:linux` command. Its
-lifecycle checks attempt competing CLI launches for the active target and a
+The Linux demo lane remains a separate `verify:hopper:linux` command. Hopper
+6.4.2's ELF loader did not recognize the original 4,119-byte literal or three
+non-ASCII byte strings in the measured fixtures. The lane retains complete raw
+byte checks for those literals through source-owned symbols. Recognition of the
+original full-length literal is bound to its exact source address; its decoded
+object coverage remains explicitly unverified on Linux even when recognized.
+Absent non-ASCII recognition also reports decoded-object coverage as unverified.
+Recognized non-ASCII and control-text objects must still match their source
+bytes, encoding, filters and searches.
+A separate 548-byte ASCII literal requires native fragmentation, shortened
+provider display, complete decoded fragments and dossier provenance on Linux;
+the macOS lane retains the original full-length recognition requirement. These
+are observed fixture/build capabilities, not universal Hopper length limits.
+Its lifecycle checks attempt competing CLI launches for the active target and a
 different target, requiring rejection before either can change the owning
 MCP session's documents or procedures. Lease boundary tests also preserve
 unresponsive or malformed live endpoints while allowing confirmed stale
 sockets to recover.
+
+`verify:setup:linux` exercises installation on a clean supported Linux runner as
+root. Use a disposable VM: this lane installs Hopper and its Linux runtime
+dependencies through the system package manager. Set `REA_VERIFY_SERVER_COMMAND`
+to the CLI entrypoint being verified. The command builds and checks source-owned
+ELF fixtures before testing the read-only Hopper setup plan, approved
+installation, scoped doctor, real CLI/MCP analysis, rejection of a modified
+launcher, idempotent setup without requesting a reinstall, and owned child
+cleanup. Before installation and after teardown, a clean-runner process scan
+also rejects surviving Hopper demo helpers or Xvfb groups, including orphans
+whose launcher exited. This scan observes processes without signaling them.
+Hopper detection compares executable file identity through `/proc`, covering
+alternate or configured launcher paths even after an invoked symlink is removed.
+The dedicated runner must have no unrelated Hopper/Xvfb sessions. It requires
+the repository's pinned development toolchain and an
+existing host C compiler, `file`, `nm`, and `strings`. Use `verify:hopper:linux`
+instead when Hopper is already installed.
 
 `verify:hopper:fat` is a separate macOS lane requiring installed Hopper and the
 existing Xcode clang/lipo toolchain. It compiles arm64/x86-64 thin executables and
@@ -335,6 +427,11 @@ does not wait for an unlock prompt from a reachable but locked desktop keyring.
 Such a stall leaves the initial page unloaded with empty or placeholder CDP URLs;
 it does not establish permission to capture that page. See
 [the keyring diagnosis](https://github.com/morluto/rea/issues/1384#issuecomment-6093781686).
+
+On Windows, browser verifier lanes that launch an owned fixture require a
+standard, non-elevated caller token. They inspect the verifier caller before
+allocating fixture resources and refuse elevated or unobservable tokens; they do
+not change caller authority or claim to inspect the browser process token.
 
 `verify:browser` also captures a source-owned noise canvas as a real PNG above
 8 MiB through the CLI and stdio MCP, with complete byte/digest parity and real PNG
@@ -384,22 +481,44 @@ real local Codex CLI with:
 npm run verify:agent
 ```
 
+The verifier's scenarios, transcript scoring, fixture rubrics, and report gates
+are development verification code under `tests/evaluation/model-evals/`. The
+source-owned evaluator runs alongside the compiled REA tools; it is excluded
+from the shipped runtime package.
+
 The lane runs scenarios sequentially in standalone Codex (`--no-daemon`) with a
 disposable HOME and CODEX_HOME under `~/.cache/rea-agent-evaluations/`. Set
 `REA_AGENT_EVAL_ROOT` to choose another parent directory outside the OS temporary
 directory: current Codex refuses helper aliases under `/tmp`, preventing shell
 commands and skill reads even if MCP works. Each owned run directory is removed
-after verification unless fixture retention is requested. The lane
+after verification unless fixture retention is requested. Commands share the
+owned-process supervisor: native ownership preparation has its own bounded
+deadline before each short command budget, and timeouts join bounded process-tree
+and output cleanup before returning. If cleanup remains incomplete, the lane retries its retained
+owner and preserves the run directory (including disposable auth) rather than
+removing files still in use; the error retains ownership and recovery details.
+Command stderr is limited to 32 KiB and combined version output to 8 KiB;
+exceeding these diagnostic budgets fails explicitly. Scenario JSON events stream
+to the evaluator without retaining a second raw stdout copy. Cleanup attempts the
+remaining run tree even if auth removal fails, and reports unresolved cleanup
+together with the original verification failure. The lane
 installs the packaged skill and MCP registration through public `rea setup`,
 rather than copying a skill into a project that also inherits the caller's
 skills and configuration. Only authentication is copied, when present, and it
-is removed even with `REA_AGENT_EVAL_KEEP_FIXTURES=true`. No user configuration,
+is removed after confirmed process cleanup even with
+`REA_AGENT_EVAL_KEEP_FIXTURES=true`. No user configuration,
 rules, plugins or history is copied; shell snapshots and additional agents are
 disabled. Existing API-key environment authentication remains available.
-The native missing-provider scenario preapproves only `open_binary` and
+The native provider scenario preapproves only `open_binary` and
 `close_binary` in the disposable client so it reaches REA's actual provider
-boundary instead of stopping at Codex approval. This does not validate a real
-native engine or authorize arbitrary runtime execution.
+boundary instead of stopping at Codex approval. Its scenario contract accepts
+one `provider_unavailable` open refusal without a close, or one successful open
+followed by a successful close. Other errors, an unclosed session, and a close
+without acquisition fail. These outcomes and the prompt are owned together in
+`tests/evaluation/model-evals/AgentEvaluationScenarios.ts`; generic successful-tool sequences
+still apply to scenarios that require them. The provider scenario checks routing,
+reported limitations, and cleanup; free-form answer correctness remains
+unassessed. It does not validate a real native engine or authorize runtime execution.
 
 Select a smaller run with `REA_AGENT_EVAL_SCENARIOS`, a comma-separated list of
 scenario IDs. `asar-zh` exercises the packaged desktop rubric from a Chinese
@@ -412,12 +531,14 @@ limit for the whole process tree when testing on a constrained host; a Node
 heap limit alone does not bound client and child-process memory.
 
 `missing-target` leaves desktop fixtures visible without selecting one in the
-request. It requires zero REA calls and a structured request for an app name or
-artifact path. Its `expectedFirstTool` is `null`, and
+request. It requires zero REA calls and a JSON-only request for an app name or
+artifact path, with no preceding prose or Markdown fences. Its prompt and
+whole-answer validator are defined together in `AgentEvaluationScenarios.ts`.
+Its `expectedFirstTool` is `null`, and
 `targetClarificationPassed` grades that limited routing outcome independently
 of analysis prose heuristics. Analyzing a nearby example cannot pass this case.
 
-The packaged desktop and parser-comparison scenarios now assess a closed set of
+The packaged desktop, parser-comparison, and managed scenarios assess a closed set of
 known fixture claims. Each final answer must be a strict JSON manifest containing
 exactly the requested claim IDs, values, Evidence IDs, and Evidence authority and
 confidence. Golden values are not included in the prompt. The evaluator checks
@@ -434,15 +555,24 @@ analyses and use the requested module and export selectors. Boundary tests packa
 the same source-owned desktop fixture and compare the same source-owned parser
 files through actual MCP tool results, then verify that fabricated answers fail.
 
+The managed rubric checks the exact public top-level type set and the CLI entry
+point's declaring type and method name. The exact type-set claim requires an
+unfiltered member inventory: `selection` must be null and the Evidence parameters
+must omit `type_names`. A selected inventory can still ground the entry-point
+claim. Both inspections must describe the freshly built DLL's SHA-256. Entry-point
+resolution additionally requires complete artifact and member metadata, matching
+non-null module MVIDs, and a unique method at the header's metadata token. These are
+static metadata claims, not runtime behavior;
+compiler-generated member counts, token values, and MVIDs are not golden answers.
+
 Per-scenario `factualCorrectness` is `passed`, `failed`, or `not_assessed` within
 the `configured_fixture_claims` scope. A pass establishes only the configured
-claims, not unrestricted factual correctness. Native, managed, browser,
+claims, not unrestricted factual correctness. Native, browser,
 navigation-context, and address-context scenarios have no factual rubric and
-remain `not_assessed`; the managed workflow requires both artifact and member
-inspection to answer its type and entry-point question.
+remain `not_assessed`.
 
 The closed factual scenarios request complete producer Evidence on the initial
-analysis so their source selectors can authenticate all configured facts.
+inspection or analysis so their source selectors can authenticate all configured facts.
 Summary/page/item workflows are exercised separately by `javascript-module-view`;
 its heuristic gate does not establish full-producer factual correctness.
 
@@ -466,7 +596,10 @@ tool results and final answers for review.
 Report schema version 4 adds negative routing scenarios with nullable
 `expectedFirstTool` and a `targetClarificationPassed` outcome. Consumers must
 allow an expected absence of REA calls; this does not make an analysis scenario
-pass without its required tools. Version 3 changed the top-level
+pass without its required tools. Native provider records additionally report
+`scenarioOutcome` (`provider-unavailable`, `opened-and-closed`, or `failed`) and
+`scenarioOutcomePassed`; a failed outcome fails the gate independently of prose
+heuristics. Version 3 changed the top-level
 `factualCorrectness` from a constant
 string to an assessment summary with status, scope, and assessed/passed/failed/
 not-assessed scenario counts. Scenario records include the factual assessment and

@@ -2,7 +2,10 @@ import {
   Client,
   type CallToolRequestOptions,
 } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import {
+  StdioClientTransport,
+  type StdioServerParameters,
+} from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ValidateFunction } from "ajv";
 import { fileURLToPath } from "node:url";
@@ -34,8 +37,13 @@ const compileValidator = (schema: unknown): ValidateFunction<unknown> => {
 };
 
 /** Start the built production server without configuring deep binary providers. */
-export async function connectLocalToolsMcp() {
+export async function connectLocalToolsMcp(
+  environment: Readonly<Record<string, string>> = {},
+  registerCleanup: (cleanup: () => Promise<void>) => void = onTestFinished,
+  transportOptions: Readonly<Pick<StdioServerParameters, "maxBufferSize">> = {},
+) {
   const transport = new StdioClientTransport({
+    ...transportOptions,
     command: process.execPath,
     args: [
       fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
@@ -45,11 +53,12 @@ export async function connectLocalToolsMcp() {
       PATH: process.env.PATH ?? "/usr/bin:/bin",
       REA_LOG_LEVEL: "silent",
       HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
+      ...environment,
     },
     stderr: "pipe",
   });
   const client = new Client({ name: "local-tools-e2e", version: "1" });
-  onTestFinished(async () => {
+  registerCleanup(async () => {
     await client.close();
     await transport.close();
   });

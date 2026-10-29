@@ -1,3 +1,5 @@
+import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
+import type { RegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
 import { z } from "zod";
 import {
   nativeDecompileSchema,
@@ -5,9 +7,16 @@ import {
   nativeCalleesSchema,
   nativeXrefsSchema,
   nativeLiteralSearchPattern,
-  nativeStringsSchema,
 } from "./IdaNativeProtocol.js";
-import { analysisSearchInput } from "../contracts/analysisSearchContract.js";
+import {
+  analysisSearchPredicate,
+  analysisSearchQuerySchema,
+  type AnalysisSearchQuery,
+} from "../domain/analysisSearch.js";
+import {
+  matchRegexValues,
+  launchRegexMatchingLimitation,
+} from "../process/RegexMatcher.js";
 import {
   AnalysisInputError,
   AnalysisCancelledError,
@@ -16,7 +25,7 @@ import {
 import {
   functionDossierSchema,
   functionInstructionWindowSchema,
-} from "../domain/hopperValues.js";
+} from "../domain/native/functionDossier.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
@@ -32,6 +41,7 @@ import {
   disassemblySchema,
   idaAddressSchema,
   idaFunctionSchema,
+  idaStringsPageSchema,
   legacyCalleesSchema,
   legacyPageSchema,
   legacyStringSchema,
@@ -42,9 +52,10 @@ import {
   modernLookupSchema,
   modernLookupBatchSchema,
   modernPageSchema,
-  modernStringsSchema,
   modernXrefsSchema,
   nextOffset,
+  nextPageOffset,
+  surveySegmentsSchema,
   type IdaDisassembly,
   type IdaFunction,
 } from "./IdaProtocolValues.js";
@@ -63,12 +74,16 @@ const unknownBody = {
 const identity = (fn: IdaFunction) => ({
   address: fn.address,
   name: fn.name,
+  symbol: null,
   classification: null,
   body: unknownBody,
 });
 interface IdaRelationships {
   readonly items: ReturnType<typeof identity>[];
   readonly coverage: RelationshipCoverage;
+  readonly availability:
+    | { readonly available: true }
+    | { readonly available: false; readonly reason: string };
 }
 
 /** The only lookup answers upstream reports for a name or address that is not a function. */
@@ -78,7 +93,6 @@ const MISSING_PROCEDURE_ANSWERS: ReadonlySet<string> = new Set([
 ]);
 const lines = (asm: IdaDisassembly) =>
   asm.lines.map(({ address, instruction }) => `${address}: ${instruction}`);
-const searchQuerySchema = z.object(analysisSearchInput);
 
 /** Translate explicit analyst questions into a closed set of read-only upstream requests. */
 export class IdaOperationRunner {
@@ -86,17 +100,25 @@ export class IdaOperationRunner {
   readonly locations: EvidenceLocation[] = [];
   readonly limitations: string[] = [];
   relationshipCoverage: RelationshipCoverage | undefined;
+  /** The upstream cap flag of the last `xrefs_to` read, when the producer reported one. */
+  referencesTruncated: boolean | undefined;
   constructor(
     private readonly connection: IdaMcpConnection,
     private readonly protocol: "legacy" | "modern" | "native",
     private readonly database?: string,
     private readonly options: {
       readonly signal?: AbortSignal | undefined;
+      readonly regexMatchingDeadline?: RegexMatchingDeadline | undefined;
+      readonly regexWorkerHeapRequest?: RegexWorkerHeapRequest | undefined;
       readonly selectorOrigin?: "provider" | undefined;
       /** False when the loaded processor may not be x86, so `callees` cannot be trusted alone. */
       readonly x86Only?: boolean;
       /** False when the upstream server does not advertise `callgraph`. */
       readonly callGraphAvailable?: boolean;
+      /** False when the upstream server does not advertise `survey_binary`. */
+      readonly surveyAvailable?: boolean;
+      /** The program identity REA admitted, reported by `list_documents`. */
+      readonly admittedDocument?: string;
     } = {},
   ) {}
 
@@ -104,12 +126,20 @@ export class IdaOperationRunner {
     tool: string,
     args: Readonly<Record<string, JsonValue>>,
   ): Promise<JsonValue> {
-    if (this.options.signal?.aborted) throw new AnalysisCancelledError(tool);
+    if (this.options.signal?.aborted)
+      throw new AnalysisCancelledError(tool, {
+        cause: this.options.signal.reason,
+      });
     const scoped =
       this.database === undefined ? args : { ...args, database: this.database };
-    const result = await this.connection.call(tool, scoped);
+    const result = await this.connection.call(tool, scoped, {
+      signal: this.options.signal,
+    });
     this.raw.push({ tool, arguments: scoped, result });
-    if (this.options.signal?.aborted) throw new AnalysisCancelledError(tool);
+    if (this.options.signal?.aborted)
+      throw new AnalysisCancelledError(tool, {
+        cause: this.options.signal.reason,
+      });
     return result;
   }
 
@@ -131,11 +161,7 @@ export class IdaOperationRunner {
       if (value === undefined)
         throw new AnalysisProtocolError("IDA MCP omitted its function page.");
       result.push(...value.data.map((fn) => idaFunctionSchema.parse(fn)));
-      offset = value.next_offset;
-      if (offset !== null && offset <= current)
-        throw new AnalysisProtocolError(
-          "IDA MCP function pagination did not advance.",
-        );
+      offset = nextPageOffset(value.next_offset, current);
     }
     return result;
   }
@@ -150,6 +176,19 @@ export class IdaOperationRunner {
    * addresses were reported by IDA itself.
    */
   async resolve(query: string, requestedBy?: string): Promise<IdaFunction> {
+    if (query.startsWith("file-offset:"))
+      throw new AnalysisInputError(
+        requestedBy ?? "procedure_address",
+        undefined,
+        [
+          {
+            path: ["procedure"],
+            reason: "invalid_value",
+            message:
+              "IDA does not support file-offset: procedure selectors. Select Ghidra for source-file coordinates or supply an IDA analysis address or exact procedure name.",
+          },
+        ],
+      );
     if (this.protocol !== "legacy") {
       const item = modernLookupSchema.parse(
         await this.call("lookup_funcs", { queries: [query] }),
@@ -177,41 +216,89 @@ export class IdaOperationRunner {
     return entry;
   }
 
-  private lookupFunction(
+  /** Parse one lookup row: a function, an expected "missing" answer, or a producer failure. */
+  private lookupOutcome(
     query: string,
     item: z.infer<typeof modernLookupBatchSchema>[number] | undefined,
-    requestedBy?: string,
-  ): IdaFunction {
+  ): { readonly fn: IdaFunction } | { readonly missing: string } {
     if (item?.query !== query)
       throw new AnalysisProtocolError(
         `IDA function lookup answered for a different query than ${JSON.stringify(query)}.`,
       );
     if (
-      requestedBy !== undefined &&
       item.fn === null &&
       item.error !== null &&
       MISSING_PROCEDURE_ANSWERS.has(item.error)
     )
-      throw new AnalysisInputError(
-        requestedBy,
-        {
-          cause: new AnalysisProtocolError(
-            `IDA function lookup failed for ${query}: ${item.error}`,
-          ),
-        },
-        [
-          {
-            path: [],
-            reason: "invalid_value",
-            message: `IDA could not resolve procedure ${JSON.stringify(query)}: ${item.error}.`,
-          },
-        ],
-      );
+      return { missing: item.error };
     if (item.fn === null || item.error !== null)
       throw new AnalysisProtocolError(
         `IDA function lookup failed for ${query}: ${item.error ?? "missing function"}`,
       );
-    return item.fn;
+    return { fn: item.fn };
+  }
+
+  private lookupFunction(
+    query: string,
+    item: z.infer<typeof modernLookupBatchSchema>[number] | undefined,
+    requestedBy?: string,
+  ): IdaFunction {
+    const outcome = this.lookupOutcome(query, item);
+    if ("fn" in outcome) return outcome.fn;
+    if (requestedBy === undefined)
+      throw new AnalysisProtocolError(
+        `IDA function lookup failed for ${query}: ${outcome.missing}`,
+      );
+    throw new AnalysisInputError(
+      requestedBy,
+      {
+        cause: new AnalysisProtocolError(
+          `IDA function lookup failed for ${query}: ${outcome.missing}`,
+        ),
+      },
+      [
+        {
+          path: [],
+          reason: "invalid_value",
+          message: `IDA could not resolve procedure ${JSON.stringify(query)}: ${outcome.missing}.`,
+        },
+      ],
+    );
+  }
+
+  /** The containing function of an address, or why none contains it. */
+  private async containingProcedure(address: string): Promise<JsonValue> {
+    const item = modernLookupSchema.parse(
+      await this.call("lookup_funcs", { queries: [address] }),
+    )[0];
+    const outcome = this.lookupOutcome(address, item);
+    if ("fn" in outcome)
+      return {
+        query_address: address,
+        found: true,
+        procedure: identity(outcome.fn),
+      };
+    return {
+      query_address: address,
+      found: false,
+      procedure: null,
+      reason: (await this.addressInSegment(address))
+        ? "not_in_procedure"
+        : "outside_segments",
+    };
+  }
+
+  /** Segment membership from the database-scoped minimal survey; a missing fact is a failure. */
+  private async addressInSegment(address: string): Promise<boolean> {
+    if (this.options.surveyAvailable === false)
+      throw new AnalysisProtocolError(
+        "The upstream server does not advertise survey_binary, so segment membership cannot be established.",
+      );
+    const { segments } = surveySegmentsSchema.parse(
+      await this.call("survey_binary", { detail_level: "minimal" }),
+    );
+    const value = BigInt(address);
+    return segments.some(({ start, end }) => start <= value && value < end);
   }
 
   /** True only for modern callee reads on targets not proven x86-only; x86 reads never reach the graph code. */
@@ -238,7 +325,7 @@ export class IdaOperationRunner {
     this.limitations.push(...graph.limitations);
     for (const callee of graph.callees)
       if (!result.has(callee.address))
-        result.set(callee.address, identity({ ...callee, size: "unknown" }));
+        result.set(callee.address, identity(callee));
     return graph.coverage;
   }
 
@@ -253,19 +340,15 @@ export class IdaOperationRunner {
       const current: number = offset;
       if (this.protocol === "legacy") {
         const page = legacyPageSchema.parse(
-          await this.call("list_strings", { offset, count: 100 }),
+          await this.call("list_strings", { offset, count: 0 }),
         );
-        result.push(
-          ...page.data.map((item) => {
-            const s = legacyStringSchema.parse(item);
-            return { address: s.address, value: s.string };
-          }),
-        );
-        offset = page.next_offset;
+        for (const item of page.data) {
+          const s = legacyStringSchema.parse(item);
+          result.push({ address: s.address, value: s.string });
+        }
+        offset = nextPageOffset(page.next_offset, current);
       } else {
-        const page = (
-          this.protocol === "native" ? nativeStringsSchema : modernStringsSchema
-        ).parse(
+        const page = idaStringsPageSchema.parse(
           await this.call("find_regex", {
             pattern:
               this.protocol === "native"
@@ -275,15 +358,15 @@ export class IdaOperationRunner {
             limit: 100,
           }),
         );
+        if (page.error !== undefined && page.error !== null)
+          throw new AnalysisProtocolError(
+            `${this.protocol === "native" ? "Native IDA" : "IDA"} string search failed: ${page.error}`,
+          );
         result.push(
           ...page.matches.map((s) => ({ address: s.addr, value: s.string })),
         );
         offset = nextOffset(page.cursor, current);
       }
-      if (offset !== null && offset <= current)
-        throw new AnalysisProtocolError(
-          "IDA MCP string pagination did not advance.",
-        );
     }
     return result;
   }
@@ -390,6 +473,7 @@ export class IdaOperationRunner {
       throw new AnalysisProtocolError(
         `IDA xrefs failed: ${page?.error ?? "missing references"}`,
       );
+    if (page.more !== undefined) this.referencesTruncated = page.more;
     if (page.more === true)
       this.limitations.push(
         "Upstream xrefs_to capped results at 1000 references; additional references remain unknown.",
@@ -413,7 +497,14 @@ export class IdaOperationRunner {
     };
     if (this.readsCallGraph(direction)) {
       coverage = await this.addCallGraphCallees(fn, result);
-      return { items: [...result.values()], coverage };
+      return {
+        items: [...result.values()],
+        coverage,
+        availability:
+          coverage.status === "unknown"
+            ? { available: false, reason: coverage.reason }
+            : { available: true },
+      };
     }
     if (this.protocol === "legacy") {
       const value = await this.call(
@@ -426,7 +517,7 @@ export class IdaOperationRunner {
           : legacyCalleesSchema.parse(value);
       for (const item of items) {
         if ("type" in item && item.type === "external")
-          result.set(item.address, identity({ ...item, size: "unknown" }));
+          result.set(item.address, identity(item));
         else queries.push(item.name);
       }
     } else if (direction === "callers") {
@@ -435,6 +526,11 @@ export class IdaOperationRunner {
       );
       return {
         items: [],
+        availability: {
+          available: false,
+          reason:
+            "Upstream xrefs do not establish direct caller relationships.",
+        },
         coverage: {
           status: "unknown",
           reason:
@@ -463,18 +559,24 @@ export class IdaOperationRunner {
                 "Upstream callees capped results at 500; additional callees remain unknown.",
               ],
             }
-          : { status: "complete" };
+          : page.more === false
+            ? { status: "complete" }
+            : {
+                status: "unknown",
+                reason:
+                  "Upstream callees omitted an explicit truncation marker; additional callees remain unknown.",
+              };
       for (const item of page.callees) {
         if ("type" in item && item.type === "external")
           result.set(
             item.addr,
-            identity({ address: item.addr, name: item.name, size: "unknown" }),
+            identity({ address: item.addr, name: item.name }),
           );
         else queries.push(item.addr);
       }
     }
     const querySet = new Set(queries);
-    if (this.protocol === "native" && querySet.size > 0) {
+    if (this.protocol !== "legacy" && querySet.size > 0) {
       const rows = modernLookupBatchSchema.parse(
         await this.call("lookup_funcs", { queries: [...querySet] }),
       );
@@ -485,7 +587,7 @@ export class IdaOperationRunner {
         rows.some((row) => !querySet.has(row.query))
       )
         throw new AnalysisProtocolError(
-          "Native IDA returned an inconsistent callee lookup batch.",
+          "IDA returned an inconsistent callee lookup batch.",
         );
       for (const query of querySet) {
         const resolved = identity(
@@ -499,7 +601,41 @@ export class IdaOperationRunner {
         result.set(resolved.address, resolved);
       }
     }
-    return { items: [...result.values()], coverage };
+    return {
+      items: [...result.values()],
+      coverage,
+      availability: { available: true },
+    };
+  }
+
+  private async searchItems<T extends { readonly value: string }>(
+    operation: IdaOperation,
+    items: T[],
+    query: AnalysisSearchQuery | undefined,
+  ): Promise<T[]> {
+    if (query === undefined) return items;
+    if (query.mode === "literal") {
+      const matches = analysisSearchPredicate(query);
+      return items.filter(({ value }) => matches(value));
+    }
+    this.limitations.push(
+      launchRegexMatchingLimitation(
+        this.options.regexMatchingDeadline,
+        this.options.regexWorkerHeapRequest,
+      ),
+    );
+    const matched = await matchRegexValues({
+      operation,
+      pattern: query.pattern,
+      caseSensitive: query.case_sensitive,
+      values: items.map(({ value }) => value),
+      deadline: this.options.regexMatchingDeadline,
+      heapRequest: this.options.regexWorkerHeapRequest,
+      signal: this.options.signal,
+    });
+    if (!matched.ok) throw matched.error;
+    const indices = new Set(matched.value);
+    return items.filter((_, index) => indices.has(index));
   }
 
   async run(
@@ -508,33 +644,40 @@ export class IdaOperationRunner {
   ): Promise<JsonValue> {
     const query =
       operation === "search_procedures" || operation === "search_strings"
-        ? searchQuerySchema.parse(parameters)
+        ? analysisSearchQuerySchema.parse(parameters)
         : undefined;
-    const matches =
-      query === undefined ? undefined : this.searchPredicate(query);
     if (operation === "list_procedures" || operation === "search_procedures") {
       const items = (await this.functions()).map((fn) => ({
         address: fn.address,
         value: fn.name,
       }));
-      return matches === undefined
-        ? items
-        : items.filter(({ value }) => matches(value));
+      return this.searchItems(operation, items, query);
     }
     if (operation === "list_strings" || operation === "search_strings") {
+      const selectedAddress =
+        query === undefined && parameters.address !== undefined
+          ? idaAddressSchema.parse(parameters.address)
+          : undefined;
       const nativePattern =
         this.protocol === "native" && query?.mode === "literal"
           ? nativeLiteralSearchPattern(query.pattern, query.case_sensitive)
           : undefined;
       const items = await this.strings(nativePattern);
-      return matches !== undefined
-        ? items.filter(({ value }) => matches(value))
-        : parameters.address === undefined
+      return query !== undefined
+        ? this.searchItems(operation, items, query)
+        : selectedAddress === undefined
           ? items
-          : items.filter(
-              ({ address }) =>
-                address === idaAddressSchema.parse(parameters.address),
-            );
+          : items.filter(({ address }) => address === selectedAddress);
+    }
+    if (operation === "list_documents") {
+      if (this.options.admittedDocument === undefined)
+        throw new AnalysisProtocolError("The admitted IDA program is unknown.");
+      return [this.options.admittedDocument];
+    }
+    if (operation === "resolve_containing_procedure") {
+      const queried = idaAddressSchema.parse(parameters.address);
+      this.locations.push({ kind: "address", address: queried });
+      return this.containingProcedure(queried);
     }
     if (operation === "xrefs") {
       const inspectedAddress = idaAddressSchema.parse(parameters.address);
@@ -577,30 +720,6 @@ export class IdaOperationRunner {
     }
   }
 
-  private searchPredicate(
-    query: z.infer<typeof searchQuerySchema>,
-  ): (value: string) => boolean {
-    let matches: (value: string) => boolean;
-    if (query.mode === "regex") {
-      try {
-        const regex = new RegExp(
-          query.pattern,
-          query.case_sensitive ? "u" : "iu",
-        );
-        matches = (value) => regex.test(value);
-      } catch (cause: unknown) {
-        throw new AnalysisInputError("search", { cause });
-      }
-    } else {
-      const needle = query.case_sensitive
-        ? query.pattern
-        : query.pattern.toLowerCase();
-      matches = (value) =>
-        (query.case_sensitive ? value : value.toLowerCase()).includes(needle);
-    }
-    return matches;
-  }
-
   private async dossier(fn: IdaFunction): Promise<JsonValue> {
     const asm = await this.assembly(fn);
     const pseudocode = await this.pseudocode(fn);
@@ -628,6 +747,32 @@ export class IdaOperationRunner {
       basic_blocks: [],
       native_api: null,
       native_value_flow: null,
+      facet_availability: {
+        pseudocode:
+          pseudocode === null
+            ? { available: false, reason: "IDA did not supply pseudocode." }
+            : { available: true },
+        assembly: { available: true },
+        comments: {
+          available: false,
+          reason: "IDA adapter does not expose typed comments.",
+        },
+        callers: callers.availability,
+        callees: callees.availability,
+        references: {
+          available: false,
+          reason: "IDA adapter does not expose typed reference edges.",
+        },
+        strings_names: {
+          available: false,
+          reason:
+            "IDA adapter does not expose function-referenced strings and names.",
+        },
+        cfg: {
+          available: false,
+          reason: "IDA adapter does not expose basic blocks.",
+        },
+      },
       limitations: [
         ...IDA_LIMITATIONS,
         ...this.limitations,

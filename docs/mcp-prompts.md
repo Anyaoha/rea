@@ -4,6 +4,20 @@ REA exposes six provider-neutral investigation workflows through the MCP
 `prompts` capability. They complement the generated tool catalog; they do not add, remove, or
 invoke tools by themselves.
 
+Clients that expose tools but not prompts can use the target-free
+`guided_workflows` tool with `action: "list"` or `action: "render"`. CLI callers
+can use `rea guided-workflows` to list workflows, or pass `--action render`,
+`--workflow-id ID`, and `--arguments-json '{"feature":"offline search"}'` to
+render one. Both paths use the same contracts and renderer as native prompts;
+rendering returns guidance only and does not inspect a target, start analysis,
+or change session state.
+
+The list contains workflow identifiers, descriptions, and argument requirements;
+render returns only the selected workflow's text. Unknown argument names and
+non-string values are rejected with field paths. `action: "list"` accepts no
+workflow identifier or arguments. The MCP adapter respects the same
+`REA_MCP_TOOL_FAMILIES` scope as native prompts, including render requests.
+
 ## Prompt inventory
 
 | Prompt                            | Purpose                                                                              |
@@ -14,6 +28,13 @@ invoke tools by themselves.
 | `trace_crash`                     | Correlate a crash symptom with static paths and optional process capture evidence.   |
 | `audit_residual_unknowns`         | Audit current residual-unknown heads and evidence-qualified resolution.              |
 | `prepare_bounded_process_capture` | Design a bounded controlled process experiment before execution.                     |
+
+A `REA_MCP_TOOL_FAMILIES` scope advertises a workflow only when every tool in
+its suggested steps belongs to a selected family. Partially available
+workflows are omitted from `prompts/list` — `prompts/get` reports them as not
+found — so a rendered prompt never directs the agent to a disabled call. The
+server identity digest and `rea mcp doctor` prompt inventory follow the same
+scope.
 
 Every rendered prompt provides optional starting points using current REA tool
 names. Agents can call tools directly, skip irrelevant suggestions, and inspect
@@ -60,6 +81,11 @@ Use standard MCP discovery and retrieval:
 The server advertises `listChanged: true`. Updating a registered guided prompt
 emits `notifications/prompts/list_changed`, allowing clients to refresh their
 cached prompt catalog.
+
+Schema-invalid parameters to `prompts/get`, `prompts/list`,
+`completion/complete`, and `tools/list` return JSON-RPC `-32602` with field
+diagnostics. Correct the named fields and retry on the same connection.
+Unexpected handler failures retain JSON-RPC `-32603`.
 
 ## Session-aware completion
 
@@ -108,11 +134,17 @@ list does not establish that the target has no procedures.
 | Artifact occurrence | Occurrence IDs present in schema-valid retained artifact inventory pages.                                                                            |
 | Residual unknown    | Current non-resolved unknown heads only.                                                                                                             |
 
-Suggestions are Unicode-normalized, case-insensitive prefix matches. The server
-deduplicates them and sorts by code point for deterministic results. Procedure
-completion derives candidates from the complete inventory, so a name is offered
-only when it identifies one address in that inventory. Completion returns all
-matching values; it does not expose paging controls.
+Prefix matching is Unicode-normalized and case-insensitive; suggestions retain
+their original spelling. The server deduplicates them and sorts by code point
+for deterministic results. Procedure completion derives candidates from the
+complete inventory, so a name is offered only when it identifies one address in
+that inventory. Every name at a shared address participates in this check,
+including later rows that establish ambiguity. A completion reply carries at
+most 100 values, the MCP limit. `total` counts every match and
+`hasMore` is `true` when values were omitted. Completion has no paging
+controls. A longer prefix reaches an omitted value only when it excludes other
+matches; matching uses normalized, case-insensitive forms, so a value can stay
+unreachable when more than 100 matches share its normalized prefix.
 
 ## Lifecycle and safety
 

@@ -1,10 +1,11 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import {
   jsonValueSchema,
@@ -43,7 +44,23 @@ describe("official operation arguments", () => {
     const execute: AnalysisOperationPort["execute"] = (name, parameters) => {
       calls.push({ name, parameters });
       return Promise.resolve(
-        observed(name === "search_strings" ? [] : "int main() {}"),
+        observed(
+          name === "search_bytes"
+            ? {
+                matches: [],
+                searched: {
+                  blocks: [],
+                  bytes: 0,
+                  skipped_uninitialized: [],
+                  skipped_not_loaded: [],
+                },
+                complete: true,
+                next_cursor: null,
+              }
+            : name === "search_strings"
+              ? []
+              : "int main() {}",
+        ),
       );
     };
     const createSession = () =>
@@ -54,11 +71,15 @@ describe("official operation arguments", () => {
     const dependencies = {
       readConfiguration: () => parseConfig({}),
       createBinarySession: createSession,
+      createArtifactBinarySession: createSession,
+      createNativeDispatchBinarySession: createSession,
+      createNativeBinarySession: createSession,
       createManagedBinarySession: createSession,
     };
     const client = await connect({ execute });
     for (const [name, mcpParameters, cliParameters] of [
       ["procedure_pseudo_code", { procedure: "main" }, { procedure: "main" }],
+      ["search_bytes", { pattern: "48 ??" }, { pattern: "48 ??", limit: 100 }],
       [
         "search_strings",
         { pattern: "entry" },
@@ -66,7 +87,9 @@ describe("official operation arguments", () => {
       ],
     ] as const) {
       const cli = parseEvidence(
-        await runDirectAnalysis(dependencies, path, name, cliParameters),
+        await runDirectAnalysis(dependencies, path, name, cliParameters).then(
+          projectCliAnalysisResult,
+        ),
       );
       const mcp = await client.callTool({ name, arguments: mcpParameters });
       expect(mcp.isError).not.toBe(true);
@@ -93,6 +116,11 @@ describe("official operation arguments", () => {
       ["list_procedures", { document: null }],
       ["procedure_pseudo_code", { procedure: "main", document: 3 }],
       ["search_strings", { pattern: "entry", case_sensitive: null }],
+      ["search_bytes", { pattern: "??" }],
+      ["search_bytes", { pattern: "48 8B", mask: "ff" }],
+      ["search_bytes", { pattern: "4?" }],
+      ["search_bytes", { pattern: "48", limit: 1001 }],
+      ["search_bytes", { pattern: "48", cursor: null }],
     ] as const) {
       const result = await client.callTool({ name, arguments: parameters });
       expect(result.isError).toBe(true);

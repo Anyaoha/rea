@@ -1,7 +1,7 @@
 import { open } from "node:fs/promises";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import { withArtifactFileHandle } from "../artifacts/ArtifactFileOperation.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 
 /** Per-process ceilings inherited by an owned Linux producer. */
 export interface LinuxResourceLimits {
@@ -14,6 +14,36 @@ const rows = {
   file_bytes: "Max file size",
   cpu_seconds: "Max cpu time",
 } as const;
+
+/** Bound the resident input copy and retained text before allocation/collection. */
+export const BOUNDED_PRODUCER_LIMITS = {
+  input_bytes: 32 * 1024 * 1024,
+  output_bytes: 4 * 1024 * 1024,
+  command_timeout_ms: 30_000,
+  address_space_bytes: 1024 * 1024 * 1024,
+  file_bytes: 64 * 1024 * 1024,
+  cpu_seconds: 30,
+} as const;
+
+/**
+ * Pin soft and hard ceilings together, ending at the prlimit option terminator.
+ * Callers that append the producer command themselves use this prefix.
+ */
+export const prlimitCeilingArguments = (
+  limits: LinuxResourceLimits,
+): string[] => [
+  `--as=${limits.address_space_bytes}:${limits.address_space_bytes}`,
+  `--fsize=${limits.file_bytes}:${limits.file_bytes}`,
+  `--cpu=${limits.cpu_seconds}:${limits.cpu_seconds}`,
+  "--core=0:0",
+  "--",
+];
+
+/** Pin soft and hard ceilings together, then hand the producer argv to the limiter. */
+export const prlimitArgumentVector = (
+  limits: LinuxResourceLimits,
+  command: string,
+): string[] => [...prlimitCeilingArguments(limits), command];
 
 /** Never raise either inherited soft policy or hard ceiling. */
 export const clampLinuxResourceLimits = (
@@ -47,36 +77,17 @@ export const readLinuxResourceLimits = async (
   resourceScope?: ArtifactResourceScope,
 ): Promise<LinuxResourceLimits> => {
   const file = await open("/proc/self/limits", "r");
-  const owner = new OwnedFileHandle(file);
-  let failure: unknown;
-  try {
-    const buffer = Buffer.alloc(16 * 1024);
-    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-    if (bytesRead === buffer.length)
-      throw new Error("Inherited Linux limits exceed the report budget.");
-    return clampLinuxResourceLimits(
-      configured,
-      buffer.subarray(0, bytesRead).toString("utf8"),
-    );
-  } catch (cause: unknown) {
-    failure = cause;
-    throw cause;
-  } finally {
-    if (resourceScope === undefined) await file.close();
-    else {
-      const cleaned = await resourceScope.release({
-        kind: "file-handle",
-        resource: "/proc/self/limits",
-        handle: owner,
-      });
-      if (cleaned.kind === "failed")
-        throw ArtifactReaderFailure.withCleanup(
-          failure ?? cleaned.cause,
-          ArtifactReaderFailure.cleanupObservation(
-            cleaned.cause,
-            "/proc/self/limits",
-          ),
-        );
-    }
-  }
+  return withArtifactFileHandle(
+    "/proc/self/limits",
+    file,
+    resourceScope,
+    undefined,
+    async (handle) => {
+      const reportBudget = 16 * 1024;
+      const buffer = await readFileHandleRange(handle, 0, reportBudget);
+      if (buffer.length === reportBudget)
+        throw new Error("Inherited Linux limits exceed the report budget.");
+      return clampLinuxResourceLimits(configured, buffer.toString("utf8"));
+    },
+  );
 };

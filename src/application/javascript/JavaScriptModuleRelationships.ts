@@ -18,10 +18,15 @@ import type {
   JavaScriptModuleOrigin,
   JavaScriptSemanticModuleLink,
 } from "../../domain/javascript/javascriptSemanticIr.js";
+import {
+  isJsonModuleTarget,
+  moduleResolutionModeForJavaScriptReference,
+} from "../../domain/javascript/javascriptModuleResolutionMode.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   addAstContainsEdge,
   artifactLocalIdentity,
+  fileOccurrenceIdentity,
   type JavaScriptArtifactGraphContext,
   type JavaScriptArtifactGraphCoverage,
 } from "./JavaScriptArtifactGraphContext.js";
@@ -30,14 +35,14 @@ import {
   staticInferenceEvidence,
 } from "./JavaScriptArtifactGraphEvidence.js";
 import {
-  moduleKindForJavaScriptReference,
+  artifactPathResolutionProperties,
   moduleResolutionModeProperties,
   resolveArtifactPathByContext,
   type ArtifactPathResolution,
 } from "./JavaScriptArtifactPathResolution.js";
 import { projectJavaScriptExportReturnShapes } from "../../domain/javascript/javascriptExportReturnShapeProjection.js";
 
-import type { JavaScriptModuleSemanticIr } from "./JavaScriptArtifactAnalysisTypes.js";
+import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
 
 interface SemanticAnalysis {
   readonly ir: JavaScriptModuleSemanticIr;
@@ -54,6 +59,8 @@ interface RelationshipInput {
 type ResolvedModuleTarget = {
   readonly node: ApplicationNode;
   readonly limitations: readonly string[];
+  readonly jsonStatus: "included" | "invalid" | "unavailable" | null;
+  readonly resolution?: ArtifactPathResolution;
 } & (
   | {
       readonly path: string;
@@ -81,8 +88,13 @@ export const addJavaScriptSourceModules = (
     if (asset === undefined || semantic === null || program === undefined)
       continue;
     const exports = semantic.ir.moduleLinks
-      .flatMap(({ exportedName }) =>
-        exportedName === null ? [] : [exportedName],
+      .flatMap(({ exportedName, kind }) =>
+        exportedName === null || kind === "type-import" ? [] : [exportedName],
+      )
+      .sort(compareUnicodeCodePoints);
+    const typeExports = semantic.ir.moduleLinks
+      .flatMap(({ exportedName, kind }) =>
+        exportedName === null || kind !== "type-import" ? [] : [exportedName],
       )
       .sort(compareUnicodeCodePoints);
     const retainedExports = [...new Set(exports)];
@@ -98,15 +110,20 @@ export const addJavaScriptSourceModules = (
           label: file.path,
           properties: {
             semantic_role: "source-module",
+            file_occurrence: fileOccurrenceIdentity(file),
+            source_sha256: file.sha256,
             path: file.path,
-            container_sha256: file.container_sha256,
             logical_module_key: file.path,
             module_format: moduleFormat(file.path, semantic.ir),
             import_relationships: semantic.ir.moduleLinks.filter(
               ({ kind }) => kind === "import" || kind === "require",
             ).length,
+            type_relationships: semantic.ir.moduleLinks.filter(
+              ({ kind }) => kind === "type-import",
+            ).length,
             export_relationships: exports.length,
             export_names: retainedExports,
+            type_export_names: [...new Set(typeExports)],
             omitted_export_names: 0,
           },
           evidence: astObservationEvidence({
@@ -152,6 +169,7 @@ export function* addJavaScriptModuleRelationshipsSteps(
     for (const link of semantic.ir.moduleLinks) {
       // One module can export thousands of bindings, each with return shapes.
       yield;
+      if (link.kind === "type-import") continue;
       const input = { context, file, semantic, source, link };
       if (isExportLink(link)) addExportRelationship(input, omissions);
       else if (link.specifier !== null)
@@ -189,6 +207,7 @@ const addExportRelationship = (
         label: `${file.path}:${link.exportedName}`,
         properties: {
           semantic_role: "export-binding",
+          file_occurrence: fileOccurrenceIdentity(file),
           module_path: file.path,
           relationship_kind: link.kind,
           exported_name: link.exportedName,
@@ -277,7 +296,10 @@ const resolveModuleTarget = (
     sourcePath: input.file.path,
     context: "module-specifier",
     files: input.context.filesByPath,
-    moduleKind: moduleKindForJavaScriptReference(
+    jsonDocuments: input.context.analysis.jsonDocuments,
+    directoryPaths: input.context.directoryPaths,
+    unanalyzedFiles: input.context.unanalyzedFiles,
+    moduleKind: moduleResolutionModeForJavaScriptReference(
       input.file.path,
       input.link.kind === "require" || input.link.kind === "commonjs-export"
         ? "require"
@@ -287,15 +309,13 @@ const resolveModuleTarget = (
   });
   if (resolution.resolution_status !== "resolved")
     return {
-      node: unresolvedModuleNode(
-        input,
-        specifier,
-        resolution.resolution_status,
-      ),
+      node: unresolvedModuleNode(input, specifier, resolution),
       path: null,
       file: null,
+      jsonStatus: null,
       status: resolution.resolution_status,
       limitations: resolution.limitations,
+      resolution,
     };
   const path = resolution.resolved_path;
   const file = input.context.filesByPath.get(path);
@@ -310,22 +330,29 @@ const resolveModuleTarget = (
     node,
     path,
     file,
+    jsonStatus: isJsonModuleTarget(path, file.kind)
+      ? input.context.analysis.jsonDocuments.read(file).status
+      : null,
     status: "resolved",
     limitations: resolution.limitations,
+    resolution,
   };
 };
 
 const unresolvedModuleNode = (
   input: RelationshipInput,
   specifier: string,
-  status: Exclude<ResolvedModuleTarget["status"], "resolved">,
+  resolution: Extract<
+    ArtifactPathResolution,
+    { resolution_status: Exclude<ResolvedModuleTarget["status"], "resolved"> }
+  >,
 ): ApplicationNode =>
   input.context.accumulator.addNode({
     kind: "javascript-module",
     identity: artifactLocalIdentity(
       input.file.sha256,
       "unresolved-semantic-module",
-      `${status}:${specifier}`,
+      `${resolution.resolution_status}:${specifier}`,
     ),
     observations: [
       {
@@ -333,7 +360,8 @@ const unresolvedModuleNode = (
         properties: {
           semantic_role: "module-reference",
           declared_specifier: specifier,
-          resolution_status: status,
+          resolution_status: resolution.resolution_status,
+          ...artifactPathResolutionProperties(resolution),
         },
         evidence: staticInferenceEvidence({
           sha256: input.file.sha256,
@@ -354,6 +382,9 @@ const moduleOriginForExport = (
 ): JavaScriptModuleOrigin | null => {
   if (link.specifier !== null)
     return {
+      ...(link.resolutionMode === undefined
+        ? {}
+        : { resolutionMode: link.resolutionMode }),
       specifier: link.specifier,
       importedPath: link.importedName === null ? [] : [link.importedName],
     };
@@ -383,11 +414,9 @@ const relationshipProperties = (
   exported_name: link.exportedName,
   resolved_path: target?.path ?? null,
   resolution_status: target?.status ?? null,
+  ...artifactPathResolutionProperties(target?.resolution),
   target_file_kind: target?.file?.kind ?? null,
-  target_json_status:
-    target?.file?.kind === "json" || target?.file?.kind === "package-json"
-      ? jsonStatus(target.file)
-      : null,
+  target_json_status: target?.jsonStatus ?? null,
 });
 
 const relationshipEvidence = (
@@ -431,6 +460,7 @@ const moduleFormat = (
   const extension = posix.extname(path).toLowerCase();
   if (extension === ".mjs" || extension === ".mts") return "esm";
   if (extension === ".cjs" || extension === ".cts") return "commonjs";
+  if (extension === ".ts" || extension === ".tsx") return "unknown";
   const esm = ir.moduleLinks.some(({ kind }) =>
     ["import", "export", "re-export"].includes(kind),
   );
@@ -444,20 +474,6 @@ const moduleFormat = (
       : commonJs
         ? "commonjs"
         : "unknown";
-};
-
-const jsonStatus = (
-  file: JavaScriptArtifactFile,
-): "included" | "invalid" | "unavailable" => {
-  if (!file.text.included) return "unavailable";
-  try {
-    JSON.parse(file.text.value);
-    return "included";
-  } catch (cause: unknown) {
-    // Invalid JSON is classified without further detail.
-    void cause;
-    return "invalid";
-  }
 };
 
 const isExportLink = (link: JavaScriptSemanticModuleLink): boolean =>

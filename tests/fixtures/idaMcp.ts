@@ -57,6 +57,7 @@ const modernNames = [
   "callees",
   "xrefs_to",
   "callgraph",
+  "survey_binary",
 ];
 
 /** Stateful producer fixture at the real connection seam; no module mocking. */
@@ -67,6 +68,7 @@ export class RecordingIdaMcp implements IdaMcpConnection {
   }[] = [];
   connects = 0;
   closes = 0;
+  detaches = 0;
   inputSha256: string;
   inputPath: string;
   imageBase = "0x1000";
@@ -93,6 +95,7 @@ export class RecordingIdaMcp implements IdaMcpConnection {
   }
   /** Tool names the fake server advertises; defaults to the profile's full set. */
   tools?: readonly string[];
+  readResource?: NonNullable<IdaMcpConnection["readResource"]>;
   async connect() {
     this.connects += 1;
     return this.tools ?? (this.mode === "attached" ? legacyNames : modernNames);
@@ -102,6 +105,9 @@ export class RecordingIdaMcp implements IdaMcpConnection {
   }
   async close() {
     this.closes += 1;
+  }
+  detach() {
+    this.detaches += 1;
   }
   async call(
     name: string,

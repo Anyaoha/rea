@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import {
+  analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
+} from "./javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { moduleResolutionModeForJavaScriptReference } from "./javascriptModuleResolutionMode.js";
 import {
   origin,
   topLevelBinding,
@@ -21,6 +26,11 @@ describe("TypeScript import-equals links", () => {
         importedName: null,
         localName: "dependency",
         exportedName: null,
+      }),
+      expect.objectContaining({
+        kind: "type-import",
+        specifier: "./types",
+        localName: "types",
       }),
     ]);
   });
@@ -51,6 +61,147 @@ describe("TypeScript import-equals links", () => {
   });
 });
 
+describe("CommonJS wrapper parameter redeclarations", () => {
+  it("does not infer a CommonJS wrapper from resolution mode in an explicit module", () => {
+    const path = "app/main.mjs";
+    const parsed = parseJavaScriptSource(
+      'var require; require("./dependency.cjs");',
+      path,
+    );
+    expect(parsed).not.toBeNull();
+    expect(parsed?.program.sourceType).toBe("module");
+    const ir = analyzeParsedJavaScriptSemantics(
+      parsed!,
+      moduleResolutionModeForJavaScriptReference(path, "static-import"),
+    );
+    expect(ir.moduleLinks).not.toContainEqual(
+      expect.objectContaining({ specifier: "./dependency.cjs" }),
+    );
+  });
+
+  it("retains ambient exports and require through uninitialized top-level vars", () => {
+    const path = "app/main.cjs";
+    const parsed = parseJavaScriptSource(
+      'var module, exports, require; module.exports = require("./dependency.cjs");',
+      path,
+    );
+    expect(parsed).not.toBeNull();
+    const ir = analyzeParsedJavaScriptSemantics(
+      parsed!,
+      moduleResolutionModeForJavaScriptReference(path, "static-import"),
+    );
+    expect(ir.moduleLinks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "commonjs-export",
+          specifier: "./dependency.cjs",
+          localName: null,
+          exportedName: "default",
+        }),
+      ]),
+    );
+  });
+
+  it("retains the Node loader call on an uninitialized wrapper var assignment RHS", () => {
+    const path = "app/main.cjs";
+    const parsed = parseJavaScriptSource(
+      'var require; require = require("./bootstrap.cjs");',
+      path,
+    );
+    expect(parsed).not.toBeNull();
+    const ir = analyzeParsedJavaScriptSemantics(
+      parsed!,
+      moduleResolutionModeForJavaScriptReference(path, "static-import"),
+    );
+    expect(ir.moduleLinks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "require",
+          specifier: "./bootstrap.cjs",
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    'var require = local; require("./dependency.cjs");',
+    'var require; require = replacement; require("./dependency.cjs");',
+    "var module; module = replacement; module.exports = 1;",
+    "var exports; exports = replacement; exports.value = 1;",
+    'let require; require("./dependency.cjs");',
+    'function nested() { var require; require("./dependency.cjs"); }',
+  ])("keeps non-wrapper declarations as shadows: %s", (source) => {
+    const path = "app/main.cjs";
+    const parsed = parseJavaScriptSource(source, path);
+    expect(parsed).not.toBeNull();
+    const ir = analyzeParsedJavaScriptSemantics(
+      parsed!,
+      moduleResolutionModeForJavaScriptReference(path, "static-import"),
+    );
+    expect(
+      ir.moduleLinks.filter(
+        ({ kind }) => kind === "require" || kind === "commonjs-export",
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("TypeScript type-only module links", () => {
+  it("retains declarations without runtime bindings or callable claims", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      import type { Whole } from "./whole";
+      import { type Inline } from "./inline";
+      import { type Erased, value } from "./mixed";
+      export type { Reexported } from "./reexported";
+      export { type InlineExport } from "./inline-export";
+      export type LocalType = string;
+      export interface LocalInterface { value: string }
+      function hiddenFunction() { return 1; }
+      export type { hiddenFunction };
+    `);
+
+    expect(ir.bindings.map(({ name }) => name).sort()).toEqual([
+      "hiddenFunction",
+      "value",
+    ]);
+
+    const externalLinks = ir.moduleLinks
+      .filter(({ specifier }) => specifier !== null)
+      .map(
+        ({ kind, specifier, importedName, exportedName }) =>
+          [kind, specifier, importedName, exportedName] as const,
+      );
+    expect(externalLinks).toEqual([
+      ["type-import", "./whole", "Whole", null],
+      ["type-import", "./inline", "Inline", null],
+      ["type-import", "./mixed", "Erased", null],
+      ["import", "./mixed", "value", null],
+      ["type-import", "./reexported", "Reexported", "Reexported"],
+      ["type-import", "./inline-export", "InlineExport", "InlineExport"],
+    ]);
+
+    const typeLinks = ir.moduleLinks
+      .filter(({ kind }) => kind === "type-import")
+      .map(
+        ({ specifier, localName, exportedName, callableId }) =>
+          [specifier, localName, exportedName, callableId] as const,
+      );
+    expect(typeLinks).toEqual([
+      ["./whole", "Whole", null, null],
+      ["./inline", "Inline", null, null],
+      ["./mixed", "Erased", null, null],
+      ["./reexported", null, "Reexported", null],
+      ["./inline-export", null, "InlineExport", null],
+      [null, "LocalType", "LocalType", null],
+      [null, "LocalInterface", "LocalInterface", null],
+      [null, "hiddenFunction", "hiddenFunction", null],
+    ]);
+    expect(ir.limitations).toContain(
+      "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
+    );
+  });
+});
+
 describe("CommonJS dependency links", () => {
   it("retains an import-equals binding and its module origin", () => {
     const ir = analyzeJavaScriptSemantics(`
@@ -75,6 +226,12 @@ describe("CommonJS dependency links", () => {
         specifier: "dependency",
         importedName: null,
         localName: "typed",
+      }),
+      expect.objectContaining({
+        kind: "type-import",
+        specifier: "type-only",
+        importedName: null,
+        localName: "TypeOnly",
       }),
     ]);
     expect(ir.references.filter(({ name }) => name === "typed")).toHaveLength(
@@ -122,6 +279,7 @@ describe("CommonJS dependency links", () => {
       const bound = (require("bound") as unknown);
       const { left, right } = require("destructured");
       module.exports = require("forwarded");
+      exports = module.exports;
       exports.member = require("member").value;
       exports.first = exports.second = require("chained");
     `);

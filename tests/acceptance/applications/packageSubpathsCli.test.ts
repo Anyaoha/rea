@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, join, relative } from "node:path";
+import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { expect } from "vitest";
@@ -11,11 +10,12 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
+import { writeFixtureFiles } from "../../support/workspace/writeFixtureFiles.js";
 
 const createPackageSubpathFixture = async () => {
   const root = await createTestTempDirectory("rea-package-subpaths-");
   const source = [
-    'const nearest = require("fixture/parser");',
+    'const {BrowserWindow} = require("electron"); const nearest = require("fixture/parser");',
     'const nested = require("nested/parser");',
     'const parser = require("exported/parser");',
     'const directory = require("exported/parser/");',
@@ -35,7 +35,7 @@ const createPackageSubpathFixture = async () => {
   const selfSource = 'const self = require("fi%xture"); module.exports = self;';
   const importSource = [
     'import literal from "fi%xture";',
-    'import uri from "file:///src/uri-dep.cjs";',
+    'import uri from "FILE:///src/uri-dep.cjs?token=%2F#entry";',
   ].join("\n");
   const files = {
     "src/main.cjs": source,
@@ -85,13 +85,7 @@ const createPackageSubpathFixture = async () => {
     "node_modules/scalar.js": "module.exports = 'scalar sibling';",
     "node_modules/scalar/package.json": JSON.stringify({ exports: false }),
   };
-  await Promise.all(
-    Object.entries(files).map(async ([path, content]) => {
-      const absolute = join(root, path);
-      await mkdir(dirname(absolute), { recursive: true });
-      await writeFile(absolute, content);
-    }),
-  );
+  await writeFixtureFiles(root, files);
   return { root, source, selfSource, importSource };
 };
 
@@ -141,6 +135,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     ).toBe("node_modules/fi%xture/actual.cjs");
 
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(graph.coverage.status).toBe("complete");
+    const requireFileUrl = graph.edges.find(
+      ({ properties }) =>
+        properties.module_link_kind === "require" &&
+        properties.specifier === "file:///src/uri-dep.cjs",
+    );
+    expect(requireFileUrl?.evidence.limitations.length).toBeGreaterThan(0);
     const imports = graph.edges.filter(
       ({ properties }) => properties.module_link_kind === "require",
     );
@@ -181,9 +182,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         relation: "imports",
         properties: expect.objectContaining({
           module_link_kind: "import",
-          specifier: "file:///src/uri-dep.cjs",
-          resolved_path: "src/uri-dep.cjs",
-          resolution_status: "resolved",
+          specifier: "FILE:///src/uri-dep.cjs?token=%2F#entry",
+          resolved_path: null,
+          resolution_status: "unavailable",
         }),
         evidence: sourceEvidence("src/imports.mjs", importSource),
       }),

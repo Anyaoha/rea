@@ -7,43 +7,55 @@ import { expect, it, onTestFinished } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 
-it("advertises valid target-free packet capture schemas and actionable missing-tool diagnostics", async () => {
-  const harness = await createApplicationMcpHarness({
-    serverOptions: { environment: {} },
-  });
-  onTestFinished(harness.close);
-  const tool = (await harness.client.listTools()).tools.find(
-    ({ name }) => name === "inspect_packet_capture",
-  );
-  if (tool?.outputSchema === undefined) throw new Error("Capture tool missing");
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const inputSchema: Record<string, unknown> = tool.inputSchema;
-  const outputSchema: Record<string, unknown> = tool.outputSchema;
-  expect(ajv.validateSchema(inputSchema)).toBe(true);
-  expect(ajv.validateSchema(outputSchema)).toBe(true);
-  const input = {
-    path:
-      process.platform === "win32" ? "C:\\recording.pcap" : "/recording.pcap",
-    fields: ["ip.addr"],
-  };
-  expect(ajv.validate(inputSchema, input)).toBe(true);
-  expect(ajv.validate(inputSchema, { ...input, interface: "lo0" })).toBe(false);
-  const result = await harness.client.callTool({
-    name: tool.name,
-    arguments: input,
-  });
-  expect(parseMcpToolError(result)).toMatchObject({
-    error: {
-      code: "capability_unavailable",
-      details: {
-        operation: tool.name,
-        reason: expect.stringContaining("REA_TSHARK_COMMAND"),
+it.each(["inspect_packet_capture", "inspect_packet_fields"])(
+  "advertises valid target-free schemas and missing-tool diagnostics: %s",
+  async (name) => {
+    const harness = await createApplicationMcpHarness({
+      serverOptions: { environment: {} },
+    });
+    onTestFinished(harness.close);
+    const tool = (await harness.client.listTools()).tools.find(
+      (tool) => tool.name === name,
+    );
+    if (tool?.outputSchema === undefined)
+      throw new Error("Capture tool missing");
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const inputSchema: Record<string, unknown> = tool.inputSchema;
+    const outputSchema: Record<string, unknown> = tool.outputSchema;
+    expect(ajv.validateSchema(inputSchema)).toBe(true);
+    expect(ajv.validateSchema(outputSchema)).toBe(true);
+    const input =
+      name === "inspect_packet_fields"
+        ? { query: "usb" }
+        : {
+            path:
+              process.platform === "win32"
+                ? "C:\\recording.pcap"
+                : "/recording.pcap",
+            fields: ["ip.addr"],
+          };
+    expect(ajv.validate(inputSchema, input)).toBe(true);
+    expect(ajv.validate(inputSchema, { ...input, interface: "lo0" })).toBe(
+      false,
+    );
+    const result = await harness.client.callTool({
+      name: tool.name,
+      arguments: input,
+    });
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: {
+        code: "capability_unavailable",
+        details: {
+          operation: tool.name,
+          reason: expect.stringContaining("REA_TSHARK_COMMAND"),
+        },
       },
-    },
-  });
-  await harness.client.ping();
-});
+    });
+    await harness.client.ping();
+  },
+);
 
 it.each(["cancelled", "cleanup"])(
   "retains completed Evidence after %s failure",
@@ -78,6 +90,9 @@ it.each(["cancelled", "cleanup"])(
             },
           );
     const packetCapture = new PacketCaptureService({
+      inspectFields: async () => {
+        throw new Error("Unexpected field discovery call");
+      },
       inspect: async () => err(failure),
       close: async () => {},
     });
@@ -108,9 +123,7 @@ it.each(["cancelled", "cleanup"])(
       arguments: {},
     });
     expect(bundle.isError).not.toBe(true);
-    expect(JSON.stringify(bundle.structuredContent)).toContain(
-      evidence.evidence_id,
-    );
+    expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(evidence);
     expect(harness.session.evidenceById(evidence.evidence_id)).toEqual(
       evidence,
     );
@@ -120,6 +133,9 @@ it.each(["cancelled", "cleanup"])(
 it("rejects oversized selector expansion through the MCP boundary before invoking the provider", async () => {
   let calls = 0;
   const packetCapture = new PacketCaptureService({
+    inspectFields: async () => {
+      throw new Error("Unexpected field discovery call");
+    },
     inspect: async () => {
       calls++;
       return err(new AnalysisCancelledError("inspect_packet_capture"));

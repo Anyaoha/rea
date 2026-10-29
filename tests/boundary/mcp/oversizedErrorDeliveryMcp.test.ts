@@ -13,15 +13,19 @@ import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import type { Evidence } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 const UNTRUSTED_TARGET_CONTENT = {
   provenance: { untrusted_content: true, source: "analysis_target" },
 };
 
-const failureWithName = (nameBytes: number, targetContent = false) =>
-  delivery.toErrorToolResult(
+const failureWithName = (
+  nameBytes: number,
+  targetContent = false,
+  selectedDelivery = delivery,
+) =>
+  selectedDelivery.toErrorToolResult(
     new AnalysisInputError("procedure_address", undefined, [
       {
         path: ["procedure"],
@@ -257,3 +261,83 @@ it("keeps the untrusted target-content marker on an oversized error's replacemen
     await Promise.all([client.close(), server.close()]);
   }
 });
+
+// The delivered error wire omits only the private structured carrier; its
+// `isError` flag and any provenance marker count against the result budget.
+const deliveredErrorBytes = (
+  nameBytes: number,
+  targetContent: boolean,
+  selectedDelivery = delivery,
+) => {
+  const { structuredContent: _carrier, ...wire } = failureWithName(
+    nameBytes,
+    targetContent,
+    selectedDelivery,
+  );
+  return Buffer.byteLength(JSON.stringify(wire));
+};
+
+it.each([false, true])(
+  "applies the result budget to the complete delivered error (target content: %s)",
+  async (targetContent) => {
+    const boundaryDelivery = createToolResultDelivery(4096);
+    const fittingName =
+      boundaryDelivery.resultBudgetBytes -
+      deliveredErrorBytes(0, targetContent, boundaryDelivery);
+    expect(
+      deliveredErrorBytes(fittingName, targetContent, boundaryDelivery),
+    ).toBe(boundaryDelivery.resultBudgetBytes);
+    const toolName = targetContent ? "procedure_pseudo_code" : "record_unknown";
+    const server = new EvidenceMcpServer(
+      { name: "error-budget-test", version: "1" },
+      { capabilities: {} },
+      undefined,
+      boundaryDelivery,
+    );
+    server.registerTool(toolName, { inputSchema: z.object({}) }, async () =>
+      failureWithName(fittingName, targetContent, boundaryDelivery),
+    );
+    server.registerTool(
+      targetContent ? "inspect_artifact" : "export_evidence_bundle",
+      { inputSchema: z.object({}) },
+      async () =>
+        failureWithName(fittingName + 1, targetContent, boundaryDelivery),
+    );
+    const client = new Client({ name: "error-budget-client", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const fitting = await client.callTool({
+        name: toolName,
+        arguments: {},
+      });
+      expect(fitting.isError).toBe(true);
+      expect(fitting._meta).toEqual(
+        targetContent ? UNTRUSTED_TARGET_CONTENT : undefined,
+      );
+      expect(parseMcpToolError(fitting)).toEqual(
+        failureWithName(fittingName, targetContent, boundaryDelivery)
+          .structuredContent,
+      );
+      const over = await client.callTool({
+        name: targetContent ? "inspect_artifact" : "export_evidence_bundle",
+        arguments: {},
+      });
+      expect(over.isError).toBe(true);
+      expect(over.structuredContent).toBeUndefined();
+      expect(parseMcpToolError(over)).toMatchObject({
+        error: {
+          code: "resource_constraint",
+          details: {
+            reported_limits: { original_error_code: "invalid_request" },
+          },
+        },
+      });
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  },
+  20000,
+);
